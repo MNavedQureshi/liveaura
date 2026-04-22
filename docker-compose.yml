@@ -1,0 +1,133 @@
+version: "3.9"
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  caddy_data:     # Caddy TLS certs (persisted)
+  caddy_config:
+  redis_data:
+
+services:
+
+  # ── Redis ────────────────────────────────────────────────────────
+  # Used by LiveKit for distributed pub/sub and room state
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── LiveKit Server ───────────────────────────────────────────────
+  # Self-hosted WebRTC SFU + signaling + built-in TURN
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_DOMAIN=${LIVEKIT_DOMAIN}
+    ports:
+      # WebRTC TCP (fallback when UDP is blocked)
+      - "7881:7881"
+      # WebRTC UDP — main media path, must be reachable directly from internet
+      - "7882:7882/udp"
+      # TURN UDP (NAT traversal for clients behind strict firewalls)
+      - "3478:3478/udp"
+      - "3478:3478"
+      # TURN TLS (Caddy terminates TLS and forwards here)
+      - "127.0.0.1:5349:5349"
+      # Internal HTTP API + WebSocket signaling (Caddy proxies to this)
+      - "127.0.0.1:7880:7880"
+    networks:
+      - app
+
+  # ── Caddy (reverse proxy + auto SSL via Let's Encrypt) ──────────
+  # Handles HTTPS for LiveKit signaling, frontend, and backend API
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - livekit
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 QUIC
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - LIVEKIT_DOMAIN=${LIVEKIT_DOMAIN}
+      - APP_DOMAIN=${APP_DOMAIN}
+      - API_DOMAIN=${API_DOMAIN}
+    networks:
+      - app
+
+  # ── Go API Server (~25 MB image, <1 ms response overhead) ──────────
+  backend:
+    build:
+      context: ./backend-go
+      dockerfile: Dockerfile
+    command: /server
+    restart: unless-stopped
+    depends_on:
+      - livekit
+      - redis
+    env_file: .env
+    environment:
+      - PORT=8000
+      - AGENT_DISPATCH_URL=http://agent:8001
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Go Agent Worker (STT→Claude→TTS voice pipeline) ─────────────
+  agent:
+    build:
+      context: ./backend-go
+      dockerfile: Dockerfile
+    command: /agent
+    restart: unless-stopped
+    depends_on:
+      - livekit
+    env_file: .env
+    environment:
+      - AGENT_PORT=8001
+    networks:
+      - app
+
+  # ── Next.js Frontend ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    env_file: .env
+    environment:
+      - BACKEND_URL=http://backend:8000
+    networks:
+      - app

@@ -1,0 +1,36 @@
+# Environment files — never commit secrets
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/.npm/
+
+# Go
+backend-go/vendor/
+*.exe
+
+# Python (legacy backend — keep source, ignore runtime)
+backend/__pycache__/
+backend/*.pyc
+backend/.venv/
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Claude Code helper files
+monitoring/ai-ui/
+monitoring/start-ai-ui.sh
