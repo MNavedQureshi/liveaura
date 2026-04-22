@@ -3,7 +3,7 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 # opus for the hraban/opus CGO wrapper (package name on Alpine aarch64 is opus-dev)
-RUN apk add --no-cache opus-dev build-base
+RUN apk add --no-cache opus-dev build-base git
 
 # Cache Go modules first (layer cache friendly)
 # go.sum is generated on first build via go mod tidy inside the container
