@@ -2,8 +2,8 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
-# libopus for the hraban/opus CGO wrapper
-RUN apk add --no-cache libopus-dev build-base
+# opus for the hraban/opus CGO wrapper (package name on Alpine aarch64 is opus-dev)
+RUN apk add --no-cache opus-dev build-base
 
 # Cache Go modules first (layer cache friendly)
 # go.sum is generated on first build via go mod tidy inside the container
@@ -18,7 +18,7 @@ RUN GOOS=linux go build -ldflags="-s -w" -o /out/agent  ./cmd/agent
 
 # ── Runtime stage — ~25 MB final image ─────────────────────────────────────────
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates tzdata libopus
+RUN apk add --no-cache ca-certificates tzdata opus
 
 COPY --from=builder /out/server /server
 COPY --from=builder /out/agent  /agent
