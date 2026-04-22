@@ -6,8 +6,9 @@ WORKDIR /app
 RUN apk add --no-cache libopus-dev build-base
 
 # Cache Go modules first (layer cache friendly)
-COPY go.mod go.sum ./
-RUN go mod download
+# go.sum is generated on first build via go mod tidy inside the container
+COPY go.mod ./
+RUN touch go.sum && go mod download && go mod tidy
 
 COPY . .
 
