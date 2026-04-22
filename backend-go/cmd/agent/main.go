@@ -11,7 +11,7 @@ import (
 	"github.com/ai-calling-agent/internal/pipeline"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	lksdk "github.com/livekit/client-sdk-go"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v3"
 	webrtcmedia "github.com/pion/webrtc/v3/pkg/media"
 )
