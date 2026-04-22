@@ -2,19 +2,23 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
-# opus for the hraban/opus CGO wrapper (package name on Alpine aarch64 is opus-dev)
+# opus + git + C toolchain (git is required by go mod download)
 RUN apk add --no-cache opus-dev build-base git
 
-# Cache Go modules first (layer cache friendly)
-# go.sum is generated on first build via go mod tidy inside the container
+# Force module proxy; skip sum DB so empty go.sum is fine
+ENV GOPROXY=https://proxy.golang.org,direct
+ENV GONOSUMDB=*
+ENV CGO_ENABLED=1
+
+# Download dependencies (module cache layer)
 COPY go.mod ./
-RUN touch go.sum && go mod download && go mod tidy
+RUN go mod download
 
+# Copy source and tidy / build
 COPY . .
-
-# Build both binaries — strip debug info for smaller output
-RUN GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
-RUN GOOS=linux go build -ldflags="-s -w" -o /out/agent  ./cmd/agent
+RUN go mod tidy
+RUN go build -ldflags="-s -w" -o /out/server ./cmd/server
+RUN go build -ldflags="-s -w" -o /out/agent  ./cmd/agent
 
 # ── Runtime stage — ~25 MB final image ─────────────────────────────────────────
 FROM alpine:3.19
