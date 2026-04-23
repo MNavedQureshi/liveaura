@@ -28,11 +28,12 @@ func roomClient() *lksdk.RoomServiceClient {
 // GenerateToken creates a signed LiveKit JWT for a participant.
 func GenerateToken(room, identity string, canPublish bool) (string, error) {
 	at := auth.NewAccessToken(apiKey(), apiSecret())
+	canSub := true
 	grant := &auth.VideoGrant{
 		RoomJoin:     true,
 		Room:         room,
 		CanPublish:   &canPublish,
-		CanSubscribe: true,
+		CanSubscribe: &canSub,
 	}
 	at.AddGrant(grant).
 		SetIdentity(identity).
@@ -49,7 +50,7 @@ func GenerateAgentToken(room string) (string, error) {
 		RoomJoin:     true,
 		Room:         room,
 		CanPublish:   &t,
-		CanSubscribe: true,
+		CanSubscribe: &t,
 		Hidden:       true, // agent is invisible in participant list
 	}
 	at.AddGrant(grant).
@@ -72,7 +73,7 @@ func CreateRoom(ctx context.Context, name string, meta map[string]any) error {
 
 // DeleteRoom deletes a LiveKit room.
 func DeleteRoom(ctx context.Context, name string) error {
-	_, err := roomClient().DeleteRoom(ctx, &livekit.DeleteRoomRequest{Name: name})
+	_, err := roomClient().DeleteRoom(ctx, &livekit.DeleteRoomRequest{Room: name})
 	return err
 }
 
@@ -111,7 +112,7 @@ func DispatchSIP(ctx context.Context, roomName, phoneNumber, displayName string)
 		SipCallTo:       phoneNumber,
 		RoomName:        roomName,
 		ParticipantName: displayName,
-		PlayDialtone:    true,
+		PlayRingtone:    true,
 	})
 	return err
 }
