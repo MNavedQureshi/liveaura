@@ -43,8 +43,8 @@ services:
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     environment:
-      - LIVEKIT_KEYS=${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
-      - LIVEKIT_DOMAIN=${LIVEKIT_DOMAIN}
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+      - "LIVEKIT_DOMAIN=${LIVEKIT_DOMAIN}"
     ports:
       # WebRTC TCP (fallback when UDP is blocked)
       - "7881:7881"
