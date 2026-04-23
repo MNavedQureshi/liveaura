@@ -2,8 +2,7 @@
 const nextConfig = {
   output: "standalone",
   async rewrites() {
-    // In Docker, backend is reachable via service name
-    const backendUrl = process.env.BACKEND_URL || "http://localhost:8000";
+    const backendUrl = process.env.BACKEND_URL || "http://backend:8000";
     return [
       {
         source: "/api/:path*",
