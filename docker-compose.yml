@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   app:
     driver: bridge
@@ -29,9 +27,15 @@ services:
 
   # ── LiveKit Server ───────────────────────────────────────────────
   # Self-hosted WebRTC SFU + signaling + built-in TURN
+  # Startup command: substitute domain placeholder then start server.
+  # Keys are supplied via LIVEKIT_KEYS env var (natively supported).
   livekit:
     image: livekit/livekit-server:latest
-    command: --config /etc/livekit.yaml
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        sed "s|LIVEKIT_DOMAIN_PLACEHOLDER|${LIVEKIT_DOMAIN}|g" /etc/livekit.yaml > /tmp/livekit.yaml &&
+        exec /livekit-server --config /tmp/livekit.yaml
     restart: unless-stopped
     depends_on:
       redis:
@@ -39,8 +43,7 @@ services:
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     environment:
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_KEYS=${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
       - LIVEKIT_DOMAIN=${LIVEKIT_DOMAIN}
     ports:
       # WebRTC TCP (fallback when UDP is blocked)
