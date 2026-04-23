@@ -3,7 +3,7 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 # opus + git + C toolchain (git is required by go mod download)
-RUN apk add --no-cache opus-dev build-base git
+RUN apk add --no-cache opus-dev opusfile-dev build-base git
 
 # Force module proxy; skip sum DB so empty go.sum is fine
 ENV GOPROXY=https://proxy.golang.org,direct
