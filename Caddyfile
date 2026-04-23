@@ -1,18 +1,14 @@
 # Caddy reverse proxy — auto-obtains Let's Encrypt SSL certs
-# Replace the three domain names with your actual domains/subdomains.
-# All three must have DNS A records pointing to this VPS before you run docker compose up.
+# All three domains must have DNS A records pointing to this VPS before `docker compose up`.
 
 # LiveKit signaling (WebSocket + HTTP API)
 {$LIVEKIT_DOMAIN} {
     reverse_proxy livekit:7880 {
-        # Long timeouts for WebSocket connections
         transport http {
             dial_timeout 10s
             response_header_timeout 0
-            read_buffer_size 64kb
         }
     }
-    # Allow WebSocket upgrade
     header {
         -Server
     }
@@ -23,7 +19,7 @@
     reverse_proxy frontend:3000
 }
 
-# FastAPI backend
+# Go backend API
 {$API_DOMAIN} {
     reverse_proxy backend:8000
 }

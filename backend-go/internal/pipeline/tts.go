@@ -20,25 +20,35 @@ const (
 
 // CartesiaTTS converts text to PCM and encodes it to Opus frames.
 type CartesiaTTS struct {
-	voiceID string
-	encoder *opus.Encoder
+	voiceID  string
+	language string // BCP-47 code; empty = "en"
+	model    string // sonic-english or sonic-multilingual
+	encoder  *opus.Encoder
 }
 
 // NewCartesiaTTS creates a TTS engine with a reusable Opus encoder.
-func NewCartesiaTTS() (*CartesiaTTS, error) {
+// targetLang is a BCP-47 code (e.g. "es"); pass "" for English.
+func NewCartesiaTTS(targetLang string) (*CartesiaTTS, error) {
 	enc, err := opus.NewEncoder(ttsRate, ttsChannels, opus.AppVoIP)
 	if err != nil {
 		return nil, fmt.Errorf("opus encoder: %w", err)
 	}
-	// Tune for low-latency voice
-	_ = enc.SetBitrate(24000) // 24 kbps
-	_ = enc.SetComplexity(5)  // balance quality vs latency
+	_ = enc.SetBitrate(24000)
+	_ = enc.SetComplexity(5)
 
 	voiceID := os.Getenv("CARTESIA_VOICE_ID")
 	if voiceID == "" {
-		voiceID = "a0e99841-438c-4a64-b679-ae501e7d6091" // default Cartesia voice
+		voiceID = "a0e99841-438c-4a64-b679-ae501e7d6091"
 	}
-	return &CartesiaTTS{voiceID: voiceID, encoder: enc}, nil
+	lang := targetLang
+	if lang == "" {
+		lang = "en"
+	}
+	model := "sonic-english"
+	if lang != "en" {
+		model = "sonic-multilingual"
+	}
+	return &CartesiaTTS{voiceID: voiceID, language: lang, model: model, encoder: enc}, nil
 }
 
 // SynthesizeOpus converts text → PCM via Cartesia → Opus frames for LiveKit.
@@ -54,8 +64,9 @@ func (t *CartesiaTTS) SynthesizeOpus(text string) ([][]byte, error) {
 // fetchPCM calls Cartesia and returns raw PCM s16le samples at 48 kHz.
 func (t *CartesiaTTS) fetchPCM(text string) ([]int16, error) {
 	payload := map[string]any{
-		"model_id":   "sonic-english",
+		"model_id":   t.model,
 		"transcript": text,
+		"language":   t.language,
 		"voice": map[string]any{
 			"mode": "id",
 			"id":   t.voiceID,

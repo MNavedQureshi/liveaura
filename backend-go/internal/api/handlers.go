@@ -33,6 +33,8 @@ type CreateCallRequest struct {
 	WhatsAppNumber     string `json:"whatsapp_number"`
 	Greeting           string `json:"greeting"`
 	VideoEnabled       bool   `json:"video_enabled"`
+	SourceLang         string `json:"source_lang"` // user's spoken language (e.g. "es")
+	TargetLang         string `json:"target_lang"` // agent's response language (e.g. "en")
 }
 
 var (
@@ -77,6 +79,8 @@ func createCall(c *gin.Context) {
 		"prompt":        req.Prompt,
 		"video_enabled": req.VideoEnabled,
 		"greeting":      req.Greeting,
+		"source_lang":   req.SourceLang,
+		"target_lang":   req.TargetLang,
 	}
 	if req.PresentationScript != "" {
 		meta["presentation_script"] = req.PresentationScript

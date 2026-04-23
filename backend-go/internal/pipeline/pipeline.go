@@ -20,20 +20,46 @@ type Pipeline struct {
 }
 
 // New initialises all pipeline components.
-func New(systemPrompt string) (*Pipeline, error) {
+// sourceLang is the caller's spoken language (BCP-47 code, e.g. "es").
+// targetLang is the language the agent should respond in (e.g. "en").
+// Pass empty strings to use English with no translation.
+func New(systemPrompt, sourceLang, targetLang string) (*Pipeline, error) {
 	stt, err := NewDeepgramSTT()
 	if err != nil {
 		return nil, err
 	}
-	tts, err := NewCartesiaTTS()
+	tts, err := NewCartesiaTTS(targetLang)
 	if err != nil {
 		return nil, err
 	}
 	return &Pipeline{
 		stt: stt,
-		llm: NewAnthropicLLM(systemPrompt),
+		llm: NewAnthropicLLM(buildSystemPrompt(systemPrompt, sourceLang, targetLang)),
 		tts: tts,
 	}, nil
+}
+
+// buildSystemPrompt appends translation instructions when source and target differ.
+func buildSystemPrompt(base, sourceLang, targetLang string) string {
+	if targetLang == "" || targetLang == sourceLang {
+		return base
+	}
+	langNames := map[string]string{
+		"en": "English", "es": "Spanish", "fr": "French", "de": "German",
+		"it": "Italian", "pt": "Portuguese", "ja": "Japanese", "ko": "Korean",
+		"zh": "Chinese", "ar": "Arabic", "hi": "Hindi", "ru": "Russian",
+		"nl": "Dutch", "pl": "Polish", "sv": "Swedish", "tr": "Turkish",
+	}
+	srcName := langNames[sourceLang]
+	if srcName == "" {
+		srcName = sourceLang
+	}
+	tgtName := langNames[targetLang]
+	if tgtName == "" {
+		tgtName = targetLang
+	}
+	return base + "\n\nTRANSLATION MODE: The caller speaks " + srcName +
+		". Always respond in " + tgtName + " regardless of what language the caller uses."
 }
 
 // SendAudio accepts a raw Opus payload from a LiveKit RTP packet.

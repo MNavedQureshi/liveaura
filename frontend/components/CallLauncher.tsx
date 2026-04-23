@@ -36,6 +36,8 @@ export default function CallLauncher({ onCallCreated, onClose }: Props) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [videoEnabled, setVideoEnabled] = useState(false);
+  const [sourceLang, setSourceLang] = useState("en");
+  const [targetLang, setTargetLang] = useState("en");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -57,6 +59,8 @@ export default function CallLauncher({ onCallCreated, onClose }: Props) {
       phone_number: callType === "phone" ? phoneNumber : undefined,
       whatsapp_number: callType === "whatsapp" ? whatsappNumber : undefined,
       video_enabled: videoEnabled,
+      source_lang: sourceLang,
+      target_lang: targetLang,
     };
 
     try {

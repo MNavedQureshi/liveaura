@@ -9,6 +9,8 @@ export interface CreateCallRequest {
   whatsapp_number?: string;
   greeting?: string;
   video_enabled: boolean;
+  source_lang?: string;
+  target_lang?: string;
 }
 
 export interface CallRecord {

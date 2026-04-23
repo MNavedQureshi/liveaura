@@ -130,8 +130,9 @@ func runSession(roomName string) {
 		return
 	}
 
-	// Read system prompt from room metadata
+	// Read system prompt and language settings from room metadata
 	systemPrompt := defaultPrompt
+	var sourceLang, targetLang string
 	if meta := room.Metadata(); meta != "" {
 		var m map[string]any
 		if json.Unmarshal([]byte(meta), &m) == nil {
@@ -141,10 +142,16 @@ func runSession(roomName string) {
 			if script, ok := m["presentation_script"].(string); ok && script != "" {
 				systemPrompt += "\n\nPRESENTATION SCRIPT:\n" + script
 			}
+			if sl, ok := m["source_lang"].(string); ok {
+				sourceLang = sl
+			}
+			if tl, ok := m["target_lang"].(string); ok {
+				targetLang = tl
+			}
 		}
 	}
 
-	p, err := pipeline.New(systemPrompt)
+	p, err := pipeline.New(systemPrompt, sourceLang, targetLang)
 	if err != nil {
 		log.Printf("[agent] pipeline error: %v", err)
 		return
