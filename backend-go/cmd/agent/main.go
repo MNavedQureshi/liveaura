@@ -159,7 +159,7 @@ func runSession(roomName string) {
 			if err := audioTrack.WriteSample(webrtcmedia.Sample{
 				Data:     frame,
 				Duration: 20 * time.Millisecond,
-			}); err != nil {
+			}, nil); err != nil {
 				log.Printf("[agent] write sample error: %v", err)
 			}
 		}
