@@ -22,7 +22,7 @@ RUN go build -ldflags="-s -w" -o /out/agent  ./cmd/agent
 
 # ── Runtime stage — ~25 MB final image ─────────────────────────────────────────
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates tzdata opus
+RUN apk add --no-cache ca-certificates tzdata opus opusfile
 
 COPY --from=builder /out/server /server
 COPY --from=builder /out/agent  /agent
