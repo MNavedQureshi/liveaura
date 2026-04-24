@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -33,8 +34,12 @@ func (a *AnthropicLLM) Stream(userText string, tokenC chan<- string) (string, er
 		"role": "user", "content": userText,
 	})
 
+	model := os.Getenv("ANTHROPIC_MODEL")
+	if model == "" {
+		model = "claude-haiku-4-5-20251001" // fastest/cheapest for voice
+	}
 	payload := map[string]any{
-		"model":      "claude-sonnet-4-6",
+		"model":      model,
 		"max_tokens": 1024,
 		"stream":     true,
 		"system":     a.SystemPrompt,
@@ -54,7 +59,8 @@ func (a *AnthropicLLM) Stream(userText string, tokenC chan<- string) (string, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("anthropic returned %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("anthropic returned %d: %s", resp.StatusCode, string(errBody))
 	}
 
 	var full strings.Builder

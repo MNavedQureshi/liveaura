@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -23,6 +24,7 @@ type dgTranscript struct {
 // We accept raw Opus payloads directly from LiveKit RTP packets — no decoding needed.
 type DeepgramSTT struct {
 	conn    *websocket.Conn
+	mu      sync.Mutex // guards concurrent writes to conn
 	ResultC chan string // closed when the connection ends
 }
 
@@ -59,11 +61,15 @@ func NewDeepgramSTT() (*DeepgramSTT, error) {
 
 // SendAudio sends a raw Opus frame (RTP payload) to Deepgram.
 func (s *DeepgramSTT) SendAudio(opusPayload []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.conn.WriteMessage(websocket.BinaryMessage, opusPayload)
 }
 
 // Close gracefully shuts down the Deepgram connection.
 func (s *DeepgramSTT) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_ = s.conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"CloseStream"}`))
 	_ = s.conn.Close()
 }
