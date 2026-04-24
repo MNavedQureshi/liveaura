@@ -1,31 +1,72 @@
 package pipeline
 
 import (
+	"context"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// Pipeline orchestrates the STT → LLM → TTS voice loop.
-// Call New() to create, then Run() to start (blocking).
+// EndpointDebounce is the silence window we wait after a final transcript
+// before firing the LLM. Tune this:
+//   - lower  → snappier but more mid-sentence interruptions
+//   - higher → more natural but slower perceived latency
+// Deepgram's own utterance_end_ms minimum is 1000ms, so we run our own timer.
+const EndpointDebounce = 600 * time.Millisecond
+
+// MetricEvent is a timed pipeline event published to the frontend
+// via LiveKit data channel so the UI can show a live conversation panel.
+type MetricEvent struct {
+	Type        string `json:"type"`        // speech_started, user_interim, user_final, user_done, llm_start, llm_first_token, llm_done, tts_start, tts_first_frame, audio_playing, barge_in
+	TurnID      int64  `json:"turn_id"`
+	Text        string `json:"text,omitempty"`
+	DelayMs     int64  `json:"delay_ms,omitempty"` // ms since this turn started
+	TimestampMs int64  `json:"ts"`                 // unix milliseconds
+}
+
+// Pipeline orchestrates STT → LLM → TTS with turn detection and barge-in.
 type Pipeline struct {
 	stt *DeepgramSTT
 	llm LLM
 	tts *DeepgramTTS
 
-	// OnOpusFrames is called with each 20 ms Opus frame (audio-only mode).
-	OnOpusFrames func(frames [][]byte)
-	// OnSpeakText overrides TTS — set this to use D-ID instead of Cartesia.
-	OnSpeakText func(text string)
-	// OnTranscript is called with the final STT transcript (optional, for logging).
+	// speakCtx is cancelled when the user interrupts (barge-in).
+	// A fresh ctx is created for every AI response turn.
+	speakCtx    context.Context
+	speakCancel context.CancelFunc
+	speakMu     sync.Mutex
+
+	// Accumulated user utterance across multiple final transcripts in a turn.
+	utteranceBuf strings.Builder
+	utteranceMu  sync.Mutex
+
+	// Debounce timer that fires when user has been silent long enough.
+	endpointTimer *time.Timer
+	timerMu       sync.Mutex
+
+	// Turn metadata.
+	turnID    atomic.Int64 // incremented on every SpeechStarted
+	turnStart atomic.Int64 // unix nanos; 0 if no turn
+
+	// Whether the agent is currently publishing audio.
+	isSpeaking atomic.Int32
+
+	// Callbacks wired by agent/main.go.
+	//   OnOpusFrames: write Opus frames to the LiveKit track. Must honor ctx.Done()
+	//                 between frames so barge-in can stop playback mid-word.
+	//   OnSpeakText:  used in D-ID video mode instead of OnOpusFrames.
+	//   OnEvent:      receives every MetricEvent for publishing to the data channel.
+	//   OnTranscript: receives the committed user transcript (for logging).
+	OnOpusFrames func(ctx context.Context, frames [][]byte)
+	OnSpeakText  func(text string)
+	OnEvent      func(evt MetricEvent)
 	OnTranscript func(text string)
 }
 
-// New initialises all pipeline components.
-// sourceLang is the caller's spoken language (BCP-47 code, e.g. "es").
-// targetLang is the language the agent should respond in (e.g. "en").
-// Pass empty strings to use English with no translation.
+// New creates a new pipeline.
+// sourceLang / targetLang are BCP-47 codes; pass "" for English.
 func New(systemPrompt, sourceLang, targetLang string) (*Pipeline, error) {
 	stt, err := NewDeepgramSTT()
 	if err != nil {
@@ -71,87 +112,295 @@ func (p *Pipeline) SendAudio(opusPayload []byte) {
 }
 
 // SpeakText synthesises text immediately (e.g. for greetings) without LLM.
+// Barge-in applies: if the user starts talking during this, it will be cancelled.
 func (p *Pipeline) SpeakText(text string) {
-	p.synth(text)
+	p.turnID.Add(1)
+	p.turnStart.Store(time.Now().UnixNano())
+	ctx := p.newSpeakContext()
+	p.isSpeaking.Store(1)
+	defer p.isSpeaking.Store(0)
+	p.synth(ctx, text)
 }
 
-// IsSpeaking lets the caller check if the agent is currently generating audio.
-var IsSpeaking int32 // atomic
-
-// Run blocks, consuming STT transcripts and driving the LLM→TTS loop.
-// Returns when the STT connection closes (room disconnect).
+// Run is the main event loop. Blocks until STT connection closes.
 func (p *Pipeline) Run() {
-	for transcript := range p.stt.ResultC {
-		log.Printf("[STT] %q", transcript)
-		if p.OnTranscript != nil {
-			p.OnTranscript(transcript)
+	for {
+		select {
+		case _, ok := <-p.stt.SpeechStartedC:
+			if !ok {
+				return
+			}
+			p.handleSpeechStarted()
+
+		case text, ok := <-p.stt.InterimC:
+			if !ok {
+				return
+			}
+			p.handleInterim(text)
+
+		case text, ok := <-p.stt.FinalC:
+			if !ok {
+				return
+			}
+			p.handleFinal(text)
+
+		case _, ok := <-p.stt.UtteranceEndC:
+			if !ok {
+				return
+			}
+			// Informational — we run our own debounce (EndpointDebounce) for control
+			p.emitSimple("deepgram_utterance_end")
 		}
-		// Drop new input while agent is already speaking to avoid queue buildup
-		if atomic.LoadInt32(&IsSpeaking) == 1 {
-			log.Printf("[pipeline] skipping transcript while speaking: %q", transcript)
-			continue
-		}
-		atomic.StoreInt32(&IsSpeaking, 1)
-		p.respond(transcript)
-		atomic.StoreInt32(&IsSpeaking, 0)
 	}
 }
 
 // Close shuts down the Deepgram connection and ends Run().
 func (p *Pipeline) Close() {
 	p.stt.Close()
+	p.cancelSpeak()
+	p.cancelEndpointTimer()
 }
 
-// respond streams the LLM answer and synthesises speech at sentence boundaries
-// to hit sub-200 ms time-to-first-audio (TTFA).
-func (p *Pipeline) respond(userText string) {
-	tokenC := make(chan string, 64)
+// ── Event handlers ────────────────────────────────────────────────────────────
+
+func (p *Pipeline) handleSpeechStarted() {
+	// Barge-in: cancel any ongoing AI speech immediately.
+	if p.isSpeaking.Load() == 1 {
+		log.Printf("[pipeline] BARGE-IN detected; canceling AI speech")
+		p.emitSimple("barge_in")
+		p.cancelSpeak()
+	}
+
+	// Start a new turn.
+	turnID := p.turnID.Add(1)
+	p.turnStart.Store(time.Now().UnixNano())
+
+	p.utteranceMu.Lock()
+	p.utteranceBuf.Reset()
+	p.utteranceMu.Unlock()
+
+	p.cancelEndpointTimer()
+
+	log.Printf("[turn-%d] speech_started", turnID)
+	p.emit("speech_started", "", 0)
+}
+
+func (p *Pipeline) handleInterim(text string) {
+	turnID := p.turnID.Load()
+	delay := p.turnDelayMs()
+	log.Printf("[turn-%d] interim (%dms): %q", turnID, delay, text)
+	p.emit("user_interim", text, delay)
+	// User is actively speaking — kill any pending endpoint timer
+	p.cancelEndpointTimer()
+}
+
+func (p *Pipeline) handleFinal(text string) {
+	turnID := p.turnID.Load()
+	delay := p.turnDelayMs()
+	log.Printf("[turn-%d] final (%dms): %q", turnID, delay, text)
+
+	p.utteranceMu.Lock()
+	if p.utteranceBuf.Len() > 0 {
+		p.utteranceBuf.WriteString(" ")
+	}
+	p.utteranceBuf.WriteString(text)
+	accumulated := p.utteranceBuf.String()
+	p.utteranceMu.Unlock()
+
+	p.emit("user_final", text, delay)
+
+	// Debounce: wait EndpointDebounce for more speech; if silent, fire LLM
+	p.timerMu.Lock()
+	if p.endpointTimer != nil {
+		p.endpointTimer.Stop()
+	}
+	p.endpointTimer = time.AfterFunc(EndpointDebounce, func() {
+		p.fireResponse(accumulated)
+	})
+	p.timerMu.Unlock()
+}
+
+// fireResponse commits the accumulated user utterance and runs LLM → TTS.
+func (p *Pipeline) fireResponse(fullText string) {
+	fullText = strings.TrimSpace(fullText)
+	if fullText == "" {
+		return
+	}
+	turnID := p.turnID.Load()
+	delay := p.turnDelayMs()
+	log.Printf("[turn-%d] user_done (%dms), firing LLM: %q", turnID, delay, fullText)
+	p.emit("user_done", fullText, delay)
+
+	if p.OnTranscript != nil {
+		p.OnTranscript(fullText)
+	}
+
+	// Reset utterance buffer for the next turn
+	p.utteranceMu.Lock()
+	p.utteranceBuf.Reset()
+	p.utteranceMu.Unlock()
+
+	// New cancellable ctx for this AI response
+	ctx := p.newSpeakContext()
+
+	p.isSpeaking.Store(1)
+	p.respond(ctx, fullText)
+	p.isSpeaking.Store(0)
+}
+
+// respond streams LLM → TTS with barge-in support via ctx.
+func (p *Pipeline) respond(ctx context.Context, userText string) {
+	turnID := p.turnID.Load()
+	llmStartDelay := p.turnDelayMs()
+	log.Printf("[turn-%d] llm_start (%dms)", turnID, llmStartDelay)
+	p.emit("llm_start", "", llmStartDelay)
+
+	tokenC := make(chan string, 128)
+	llmStart := time.Now()
+	firstToken := false
+	var fullReply strings.Builder
+	var chunkBuf strings.Builder
 
 	go func() {
 		if _, err := p.llm.Stream(userText, tokenC); err != nil {
-			log.Printf("[LLM] error: %v", err)
+			log.Printf("[turn-%d] LLM error: %v", turnID, err)
 		}
 	}()
 
-	var buf strings.Builder
-	start := time.Now()
-	firstChunk := true
-
+	// Drain tokens; if barge-in fires, exit and let a goroutine drain the rest.
 	for token := range tokenC {
-		buf.WriteString(token)
-		if shouldFlush(buf.String()) {
-			chunk := strings.TrimSpace(buf.String())
-			if chunk != "" {
-				if firstChunk {
-					log.Printf("[pipeline] TTFA: %dms", time.Since(start).Milliseconds())
-					firstChunk = false
+		select {
+		case <-ctx.Done():
+			log.Printf("[turn-%d] LLM cancelled mid-stream (barge-in)", turnID)
+			// Drain remaining tokens in background so LLM goroutine doesn't block
+			go func() {
+				for range tokenC {
 				}
-				p.synth(chunk)
+			}()
+			return
+		default:
+		}
+		if !firstToken {
+			ftDelay := time.Since(llmStart).Milliseconds()
+			log.Printf("[turn-%d] llm_first_token (+%dms)", turnID, ftDelay)
+			p.emit("llm_first_token", "", ftDelay)
+			firstToken = true
+		}
+		fullReply.WriteString(token)
+		chunkBuf.WriteString(token)
+		if shouldFlush(chunkBuf.String()) {
+			chunk := strings.TrimSpace(chunkBuf.String())
+			if chunk != "" {
+				p.synth(ctx, chunk)
 			}
-			buf.Reset()
+			chunkBuf.Reset()
 		}
 	}
-	// Flush any remaining text
-	if remainder := strings.TrimSpace(buf.String()); remainder != "" {
-		p.synth(remainder)
+	// Flush remainder
+	if r := strings.TrimSpace(chunkBuf.String()); r != "" {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		p.synth(ctx, r)
 	}
+
+	llmTotal := time.Since(llmStart).Milliseconds()
+	log.Printf("[turn-%d] llm_done (+%dms): %q", turnID, llmTotal, fullReply.String())
+	p.emit("llm_done", fullReply.String(), llmTotal)
 }
 
-func (p *Pipeline) synth(text string) {
-	// D-ID video mode: delegate speech to D-ID (handles TTS + lip sync)
+// synth converts one text chunk to audio and publishes frames.
+// The ctx is threaded into OnOpusFrames so the frame loop can exit on barge-in.
+func (p *Pipeline) synth(ctx context.Context, text string) {
+	// D-ID video mode: delegate — D-ID handles its own TTS + lipsync
 	if p.OnSpeakText != nil {
 		p.OnSpeakText(text)
 		return
 	}
-	// Audio-only mode: Deepgram Aura TTS → Opus frames
+	turnID := p.turnID.Load()
+	ttsStart := time.Now()
+	log.Printf("[turn-%d] tts_start: %q", turnID, text)
+	p.emit("tts_start", text, p.turnDelayMs())
+
 	frames, err := p.tts.SynthesizeOpus(text)
 	if err != nil {
-		log.Printf("[TTS] error: %v", err)
+		log.Printf("[turn-%d] tts error: %v", turnID, err)
 		return
 	}
-	if p.OnOpusFrames != nil && len(frames) > 0 {
-		p.OnOpusFrames(frames)
+	ttsElapsed := time.Since(ttsStart).Milliseconds()
+	log.Printf("[turn-%d] tts_first_frame (+%dms)", turnID, ttsElapsed)
+	p.emit("tts_first_frame", "", ttsElapsed)
+
+	// Don't publish if we've been cancelled
+	select {
+	case <-ctx.Done():
+		log.Printf("[turn-%d] tts cancelled before publish (barge-in)", turnID)
+		return
+	default:
 	}
+
+	if p.OnOpusFrames != nil && len(frames) > 0 {
+		p.emit("audio_playing", "", p.turnDelayMs())
+		p.OnOpusFrames(ctx, frames)
+	}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+func (p *Pipeline) newSpeakContext() context.Context {
+	p.speakMu.Lock()
+	defer p.speakMu.Unlock()
+	if p.speakCancel != nil {
+		p.speakCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.speakCtx = ctx
+	p.speakCancel = cancel
+	return ctx
+}
+
+func (p *Pipeline) cancelSpeak() {
+	p.speakMu.Lock()
+	defer p.speakMu.Unlock()
+	if p.speakCancel != nil {
+		p.speakCancel()
+	}
+}
+
+func (p *Pipeline) cancelEndpointTimer() {
+	p.timerMu.Lock()
+	defer p.timerMu.Unlock()
+	if p.endpointTimer != nil {
+		p.endpointTimer.Stop()
+		p.endpointTimer = nil
+	}
+}
+
+func (p *Pipeline) turnDelayMs() int64 {
+	start := p.turnStart.Load()
+	if start == 0 {
+		return 0
+	}
+	return (time.Now().UnixNano() - start) / int64(time.Millisecond)
+}
+
+func (p *Pipeline) emit(evtType, text string, delay int64) {
+	if p.OnEvent == nil {
+		return
+	}
+	p.OnEvent(MetricEvent{
+		Type:        evtType,
+		TurnID:      p.turnID.Load(),
+		Text:        text,
+		DelayMs:     delay,
+		TimestampMs: time.Now().UnixMilli(),
+	})
+}
+
+func (p *Pipeline) emitSimple(evtType string) {
+	p.emit(evtType, "", p.turnDelayMs())
 }
 
 // shouldFlush returns true when we have enough text to send to TTS.
@@ -161,11 +410,9 @@ func shouldFlush(s string) bool {
 		return false
 	}
 	last := s[len(s)-1]
-	// Sentence-ending punctuation
 	if last == '.' || last == '!' || last == '?' || last == '\n' {
 		return true
 	}
-	// Long clause — flush to keep latency bounded
 	if len(s) > 150 {
 		return true
 	}

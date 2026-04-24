@@ -9,33 +9,59 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// dgTranscript is the Deepgram streaming response shape we care about.
-type dgTranscript struct {
+// Deepgram streaming event shape.
+// The API multiplexes several message types over one WebSocket —
+// we branch on `type` and `is_final`.
+type dgMessage struct {
+	Type    string `json:"type"`   // "Results", "UtteranceEnd", "SpeechStarted", "Metadata"
+	IsFinal bool   `json:"is_final"`
+	// For Results:
 	Channel struct {
 		Alternatives []struct {
 			Transcript string  `json:"transcript"`
 			Confidence float64 `json:"confidence"`
 		} `json:"alternatives"`
 	} `json:"channel"`
-	IsFinal bool `json:"is_final"`
+	// For UtteranceEnd:
+	LastWordEnd float64 `json:"last_word_end"`
+	// For SpeechStarted:
+	Timestamp float64 `json:"timestamp"`
 }
 
-// DeepgramSTT streams Opus audio to Deepgram and emits final transcripts.
-// We accept raw Opus payloads directly from LiveKit RTP packets — no decoding needed.
+// DeepgramSTT streams Opus audio to Deepgram and emits multiple event types
+// so the pipeline can implement proper turn detection and barge-in.
+//
+// Channels (all non-blocking sends — late subscribers may drop):
+//
+//	InterimC       — partial transcript (user still talking)
+//	FinalC         — finalized chunk after endpointing silence (~300ms)
+//	UtteranceEndC  — user fully finished (~700ms silence)
+//	SpeechStartedC — Deepgram VAD: user just began speaking
+//
+// All channels close when the connection ends.
 type DeepgramSTT struct {
-	conn    *websocket.Conn
-	mu      sync.Mutex // guards concurrent writes to conn
-	ResultC chan string // closed when the connection ends
+	conn *websocket.Conn
+	mu   sync.Mutex // guards concurrent writes to conn
+
+	InterimC       chan string
+	FinalC         chan string
+	UtteranceEndC  chan struct{}
+	SpeechStartedC chan struct{}
 }
 
-// NewDeepgramSTT opens a persistent WebSocket to Deepgram's streaming STT API.
+// NewDeepgramSTT opens a persistent WebSocket to Deepgram's streaming STT API
+// with VAD events enabled for turn detection.
 func NewDeepgramSTT() (*DeepgramSTT, error) {
 	key := os.Getenv("DEEPGRAM_API_KEY")
 	if key == "" {
 		return nil, fmt.Errorf("DEEPGRAM_API_KEY not set")
 	}
 
-	// Opus payload from LiveKit is 48 kHz, 1 channel, raw Opus frames
+	// Turn-detection-tuned params:
+	//   endpointing=300        → mark transcript final after 300ms silence
+	//   utterance_end_ms=700   → separate event after 700ms silence (user truly done)
+	//   interim_results=true   → partial transcripts while user talks
+	//   vad_events=true        → SpeechStarted events for barge-in detection
 	wsURL := "wss://api.deepgram.com/v1/listen" +
 		"?model=nova-2" +
 		"&language=en-US" +
@@ -43,8 +69,10 @@ func NewDeepgramSTT() (*DeepgramSTT, error) {
 		"&sample_rate=48000" +
 		"&channels=1" +
 		"&smart_format=true" +
-		"&interim_results=false" +
-		"&endpointing=150"
+		"&interim_results=true" +
+		"&endpointing=300" +
+		"&utterance_end_ms=1000" + // Deepgram requires >=1000 for this param
+		"&vad_events=true"
 
 	header := map[string][]string{
 		"Authorization": {"Token " + key},
@@ -54,7 +82,13 @@ func NewDeepgramSTT() (*DeepgramSTT, error) {
 		return nil, fmt.Errorf("deepgram connect: %w", err)
 	}
 
-	s := &DeepgramSTT{conn: conn, ResultC: make(chan string, 16)}
+	s := &DeepgramSTT{
+		conn:           conn,
+		InterimC:       make(chan string, 32),
+		FinalC:         make(chan string, 16),
+		UtteranceEndC:  make(chan struct{}, 8),
+		SpeechStartedC: make(chan struct{}, 8),
+	}
 	go s.readLoop()
 	return s, nil
 }
@@ -75,20 +109,55 @@ func (s *DeepgramSTT) Close() {
 }
 
 func (s *DeepgramSTT) readLoop() {
-	defer close(s.ResultC)
+	defer func() {
+		close(s.InterimC)
+		close(s.FinalC)
+		close(s.UtteranceEndC)
+		close(s.SpeechStartedC)
+	}()
+
 	for {
 		_, msg, err := s.conn.ReadMessage()
 		if err != nil {
 			return
 		}
-		var t dgTranscript
-		if err := json.Unmarshal(msg, &t); err != nil {
+		var m dgMessage
+		if err := json.Unmarshal(msg, &m); err != nil {
 			continue
 		}
-		if t.IsFinal && len(t.Channel.Alternatives) > 0 {
-			text := t.Channel.Alternatives[0].Transcript
-			if text != "" {
-				s.ResultC <- text
+
+		switch m.Type {
+		case "SpeechStarted":
+			// Fire-and-forget; skip if nobody's listening
+			select {
+			case s.SpeechStartedC <- struct{}{}:
+			default:
+			}
+
+		case "UtteranceEnd":
+			select {
+			case s.UtteranceEndC <- struct{}{}:
+			default:
+			}
+
+		case "Results":
+			if len(m.Channel.Alternatives) == 0 {
+				continue
+			}
+			text := m.Channel.Alternatives[0].Transcript
+			if text == "" {
+				continue
+			}
+			if m.IsFinal {
+				select {
+				case s.FinalC <- text:
+				default:
+				}
+			} else {
+				select {
+				case s.InterimC <- text:
+				default:
+				}
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -221,16 +222,45 @@ func runSession(roomName string) {
 			}
 		}
 	} else {
-		// Audio-only mode: Cartesia TTS → Opus → LiveKit audio track
-		pipe.OnOpusFrames = func(frames [][]byte) {
-			for _, frame := range frames {
+		// Audio-only mode: Deepgram Aura TTS → Opus → LiveKit audio track.
+		// ctx is cancelled mid-loop when the user barges in.
+		pipe.OnOpusFrames = func(ctx context.Context, frames [][]byte) {
+			// Real-time pacing: 20ms per frame so LiveKit plays them at natural speed.
+			ticker := time.NewTicker(20 * time.Millisecond)
+			defer ticker.Stop()
+			for i, frame := range frames {
+				select {
+				case <-ctx.Done():
+					log.Printf("[agent] frame publish cancelled (barge-in) after %d/%d frames",
+						i, len(frames))
+					return
+				case <-ticker.C:
+				}
 				if err := audioTrack.WriteSample(webrtcmedia.Sample{
 					Data:     frame,
 					Duration: 20 * time.Millisecond,
 				}, nil); err != nil {
 					log.Printf("[agent] write sample error: %v", err)
+					return
 				}
 			}
+		}
+	}
+
+	// Publish every MetricEvent as JSON over the LiveKit data channel.
+	// The frontend subscribes to `RoomEvent.DataReceived` to render the live
+	// conversation panel with timings.
+	pipe.OnEvent = func(evt pipeline.MetricEvent) {
+		data, err := json.Marshal(evt)
+		if err != nil {
+			return
+		}
+		if err := room.LocalParticipant.PublishData(
+			data,
+			lksdk.WithDataPublishReliable(true),
+			lksdk.WithDataPublishTopic("metrics"),
+		); err != nil {
+			log.Printf("[agent] publish metric error: %v", err)
 		}
 	}
 

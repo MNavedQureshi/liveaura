@@ -7,15 +7,16 @@
  * come from LiveKit. Everything visual is inline styles — no LiveKit CSS.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
   useLocalParticipant,
   useRemoteParticipants,
   useIsSpeaking,
+  useRoomContext,
 } from "@livekit/components-react";
-import type { RemoteParticipant } from "livekit-client";
+import { RoomEvent, type RemoteParticipant } from "livekit-client";
 
 /* ── Design tokens ─────────────────────────────────────────────── */
 const C = {
@@ -321,6 +322,361 @@ function MicCard({ muted }: { muted: boolean }) {
   );
 }
 
+/* ── Live conversation panel ───────────────────────────────────── */
+/**
+ * MetricEvent mirrors the Go struct in pipeline/pipeline.go.
+ * The backend publishes one event per pipeline milestone on the
+ * "metrics" data channel topic so we can render a live timing view.
+ */
+type MetricEvent = {
+  type: string;
+  turn_id: number;
+  text?: string;
+  delay_ms?: number;
+  ts: number;
+};
+
+type Turn = {
+  id: number;
+  startedAt: number;
+  userInterim?: string;
+  userText?: string;
+  llmStartDelay?: number;        // speech_started → llm_start (STT + debounce)
+  llmFirstTokenDelay?: number;   // llm_start → first token (LLM TTFB)
+  llmDoneDelay?: number;         // llm_start → full reply
+  llmReply?: string;
+  ttsFirstFrameDelay?: number;   // TTS TTFB
+  audioPlayingDelay?: number;    // speech_started → first audio frame (end-to-end)
+  bargeIn?: boolean;
+};
+
+/** Subscribes to RoomEvent.DataReceived (topic=metrics), aggregates events into turns. */
+function useTurns(): Turn[] {
+  const room = useRoomContext();
+  const [events, setEvents] = useState<MetricEvent[]>([]);
+
+  useEffect(() => {
+    if (!room) return;
+    const onData = (
+      payload: Uint8Array,
+      _participant?: unknown,
+      _kind?: unknown,
+      topic?: string,
+    ) => {
+      if (topic !== "metrics") return;
+      try {
+        const evt: MetricEvent = JSON.parse(new TextDecoder().decode(payload));
+        setEvents((prev) => [...prev, evt]);
+      } catch {
+        /* ignore malformed */
+      }
+    };
+    room.on(RoomEvent.DataReceived, onData);
+    return () => {
+      room.off(RoomEvent.DataReceived, onData);
+    };
+  }, [room]);
+
+  return useMemo(() => {
+    const map = new Map<number, Turn>();
+    for (const evt of events) {
+      let t = map.get(evt.turn_id);
+      if (!t) {
+        t = { id: evt.turn_id, startedAt: evt.ts };
+        map.set(evt.turn_id, t);
+      }
+      switch (evt.type) {
+        case "speech_started":
+          t.startedAt = evt.ts;
+          break;
+        case "user_interim":
+          t.userInterim = evt.text;
+          break;
+        case "user_done":
+          t.userText = evt.text;
+          t.userInterim = undefined;
+          break;
+        case "llm_start":
+          t.llmStartDelay = evt.delay_ms;
+          break;
+        case "llm_first_token":
+          t.llmFirstTokenDelay = evt.delay_ms;
+          break;
+        case "llm_done":
+          t.llmDoneDelay = evt.delay_ms;
+          if (evt.text) t.llmReply = evt.text;
+          break;
+        case "tts_first_frame":
+          // keep only the first chunk's TTFB (subsequent sentences reuse streams)
+          if (t.ttsFirstFrameDelay === undefined) t.ttsFirstFrameDelay = evt.delay_ms;
+          break;
+        case "audio_playing":
+          if (t.audioPlayingDelay === undefined) t.audioPlayingDelay = evt.delay_ms;
+          break;
+        case "barge_in":
+          t.bargeIn = true;
+          break;
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.id - b.id);
+  }, [events]);
+}
+
+function Chip({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <span
+      style={{
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: highlight ? C.primary : C.surfaceAlt,
+        color: highlight ? C.primaryInk : C.ink2,
+        border: `1px solid ${highlight ? C.primary : C.border}`,
+        fontFamily: C.mono,
+        fontSize: 10,
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label} <strong>{value}ms</strong>
+    </span>
+  );
+}
+
+function TurnCard({ turn }: { turn: Turn }) {
+  const hasUserText = !!turn.userText || !!turn.userInterim;
+  const userText = turn.userText || turn.userInterim || "";
+  const isInterim = !turn.userText && !!turn.userInterim;
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${turn.bargeIn ? "#f0b8b8" : C.borderSoft}`,
+        borderRadius: C.r4,
+        background: C.bg,
+        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      {/* Turn header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontFamily: C.mono,
+          fontSize: 10,
+          color: C.ink4,
+          letterSpacing: 0.5,
+        }}
+      >
+        <span>TURN {turn.id}</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {turn.bargeIn && (
+            <span style={{ color: C.red, fontWeight: 700 }}>⚡ BARGED IN</span>
+          )}
+          {turn.audioPlayingDelay != null && !turn.bargeIn && (
+            <span style={{ color: C.primary, fontWeight: 600 }}>
+              {turn.audioPlayingDelay}ms
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* User text */}
+      {hasUserText && (
+        <div
+          style={{
+            fontFamily: C.sans,
+            fontSize: 13,
+            color: C.ink2,
+            display: "flex",
+            gap: 6,
+            alignItems: "flex-start",
+            opacity: isInterim ? 0.6 : 1,
+          }}
+        >
+          <span style={{ flexShrink: 0 }}>🎙</span>
+          <span style={{ flex: 1, lineHeight: 1.5 }}>
+            {userText}
+            {isInterim && <span style={{ color: C.ink3 }}> …</span>}
+          </span>
+        </div>
+      )}
+
+      {/* AI reply */}
+      {turn.llmReply && (
+        <div
+          style={{
+            fontFamily: C.sans,
+            fontSize: 13,
+            color: C.primarySoftInk,
+            display: "flex",
+            gap: 6,
+            alignItems: "flex-start",
+          }}
+        >
+          <span style={{ flexShrink: 0 }}>🤖</span>
+          <span style={{ flex: 1, lineHeight: 1.5 }}>{turn.llmReply}</span>
+        </div>
+      )}
+
+      {/* Timing chips */}
+      {(turn.llmStartDelay != null ||
+        turn.llmFirstTokenDelay != null ||
+        turn.ttsFirstFrameDelay != null ||
+        turn.audioPlayingDelay != null) && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 5,
+            paddingTop: 2,
+          }}
+        >
+          {turn.llmStartDelay != null && (
+            <Chip label="STT→LLM" value={turn.llmStartDelay} />
+          )}
+          {turn.llmFirstTokenDelay != null && (
+            <Chip label="LLM·1st" value={turn.llmFirstTokenDelay} />
+          )}
+          {turn.llmDoneDelay != null && (
+            <Chip label="LLM·done" value={turn.llmDoneDelay} />
+          )}
+          {turn.ttsFirstFrameDelay != null && (
+            <Chip label="TTS·1st" value={turn.ttsFirstFrameDelay} />
+          )}
+          {turn.audioPlayingDelay != null && (
+            <Chip label="▶ audio" value={turn.audioPlayingDelay} highlight />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConversationPanel() {
+  const turns = useTurns();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to the bottom as new turns / events stream in
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [turns]);
+
+  // Compute a running average of the "▶ audio" latency (only for completed, un-barged turns)
+  const avgLatency = useMemo(() => {
+    const done = turns.filter((t) => t.audioPlayingDelay != null && !t.bargeIn);
+    if (done.length === 0) return null;
+    const sum = done.reduce((a, t) => a + (t.audioPlayingDelay || 0), 0);
+    return Math.round(sum / done.length);
+  }, [turns]);
+
+  return (
+    <div
+      style={{
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: C.r7,
+        boxShadow: C.shadowMd,
+        display: "flex",
+        flexDirection: "column",
+        flex: 1.2,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: "14px 18px",
+          borderBottom: `1px solid ${C.borderSoft}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: C.sans,
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+            color: C.ink4,
+          }}
+        >
+          Live Conversation
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            fontFamily: C.mono,
+            fontSize: 11,
+            color: C.ink3,
+          }}
+        >
+          {avgLatency != null && (
+            <span>
+              avg <strong style={{ color: C.primary }}>{avgLatency}ms</strong>
+            </span>
+          )}
+          <span>
+            {turns.length} turn{turns.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      </div>
+
+      {/* Scrollable turns */}
+      <div
+        ref={scrollRef}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "12px 14px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        {turns.length === 0 && (
+          <div
+            style={{
+              color: C.ink3,
+              fontSize: 13,
+              fontFamily: C.sans,
+              textAlign: "center",
+              padding: "40px 20px",
+              lineHeight: 1.6,
+            }}
+          >
+            <div style={{ fontSize: 24, marginBottom: 10 }}>💬</div>
+            Start talking — every turn appears here with STT, LLM and TTS timings so you can see exactly where time goes.
+          </div>
+        )}
+        {turns.map((t) => (
+          <TurnCard key={t.id} turn={t} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── Inner UI — uses LiveKit hooks ──────────────────────────────── */
 function RoomUI({ agentName, onDisconnect }: {
   agentName: string; onDisconnect: () => void;
@@ -416,11 +772,14 @@ function RoomUI({ agentName, onDisconnect }: {
 
       {/* ── Cards row — fills all remaining height ─────────── */}
       <div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
-        {/* Agent card (large) */}
+        {/* Agent card (left) */}
         {agentParticipant
           ? <AgentCardConnected participant={agentParticipant} name={agentName}/>
           : <AgentCard name={agentName} speaking={false} connected={false}/>
         }
+
+        {/* Live conversation panel (middle) */}
+        <ConversationPanel/>
 
         {/* Mic card (right column) */}
         <MicCard muted={isMuted}/>
