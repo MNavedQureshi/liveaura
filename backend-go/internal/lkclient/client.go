@@ -51,7 +51,6 @@ func GenerateAgentToken(room string) (string, error) {
 		Room:         room,
 		CanPublish:   &t,
 		CanSubscribe: &t,
-		Hidden:       true, // agent is invisible in participant list
 	}
 	at.AddGrant(grant).
 		SetIdentity("ai-agent").
