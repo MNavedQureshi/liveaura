@@ -119,7 +119,7 @@ func (g *geminiLLM) Stream(userText string, tokenC chan<- string) (string, error
 
 	model := os.Getenv("GEMINI_MODEL")
 	if model == "" {
-		model = "gemini-1.5-flash"
+		model = "gemini-2.0-flash"
 	}
 	apiKey := os.Getenv("GEMINI_API_KEY")
 
