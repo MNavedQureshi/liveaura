@@ -14,8 +14,10 @@ type Pipeline struct {
 	llm LLM
 	tts *CartesiaTTS
 
-	// OnOpusFrames is called with each 20 ms Opus frame to publish into LiveKit.
+	// OnOpusFrames is called with each 20 ms Opus frame (audio-only mode).
 	OnOpusFrames func(frames [][]byte)
+	// OnSpeakText overrides TTS — set this to use D-ID instead of Cartesia.
+	OnSpeakText func(text string)
 	// OnTranscript is called with the final STT transcript (optional, for logging).
 	OnTranscript func(text string)
 }
@@ -136,6 +138,12 @@ func (p *Pipeline) respond(userText string) {
 }
 
 func (p *Pipeline) synth(text string) {
+	// D-ID video mode: delegate speech to D-ID (handles TTS + lip sync)
+	if p.OnSpeakText != nil {
+		p.OnSpeakText(text)
+		return
+	}
+	// Audio-only mode: Cartesia TTS → Opus frames
 	frames, err := p.tts.SynthesizeOpus(text)
 	if err != nil {
 		log.Printf("[TTS] error: %v", err)

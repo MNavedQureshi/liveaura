@@ -74,6 +74,16 @@ func runSession(roomName string) {
 		return
 	}
 
+	// Create a local H264 video track for D-ID avatar (only used when DID_API_KEY is set)
+	videoTrack, err := lksdk.NewLocalSampleTrack(webrtc.RTPCodecCapability{
+		MimeType:  webrtc.MimeTypeH264,
+		ClockRate: 90000,
+	})
+	if err != nil {
+		log.Printf("[agent] video track error: %v", err)
+		return
+	}
+
 	var (
 		pipe   *pipeline.Pipeline
 		pipeMu sync.Mutex
@@ -130,9 +140,10 @@ func runSession(roomName string) {
 		return
 	}
 
-	// Read system prompt and language settings from room metadata
+	// Read system prompt, language, and video settings from room metadata
 	systemPrompt := defaultPrompt
 	var sourceLang, targetLang string
+	var videoEnabled bool
 	if meta := room.Metadata(); meta != "" {
 		var m map[string]any
 		if json.Unmarshal([]byte(meta), &m) == nil {
@@ -148,6 +159,46 @@ func runSession(roomName string) {
 			if tl, ok := m["target_lang"].(string); ok {
 				targetLang = tl
 			}
+			if ve, ok := m["video_enabled"].(bool); ok {
+				videoEnabled = ve
+			}
+		}
+	}
+
+	// Start D-ID avatar stream when video is enabled and DID_API_KEY is set
+	avatarURL := os.Getenv("DID_AVATAR_URL")
+	if avatarURL == "" {
+		avatarURL = "https://create-images-results.d-id.com/DefaultPresenters/Noelle_f/image.jpeg"
+	}
+	var didStream *pipeline.DIDStream
+	if videoEnabled && os.Getenv("DID_API_KEY") != "" {
+		log.Printf("[agent] starting D-ID avatar stream")
+		ds, err := pipeline.NewDIDStream(avatarURL)
+		if err != nil {
+			log.Printf("[agent] D-ID stream error: %v", err)
+		} else {
+			didStream = ds
+			// Publish video track
+			if _, err := room.LocalParticipant.PublishTrack(videoTrack, &lksdk.TrackPublicationOptions{
+				Name: "AI Face",
+			}); err != nil {
+				log.Printf("[agent] publish video track error: %v", err)
+			}
+			// Forward D-ID video frames → LiveKit
+			didStream.OnVideoSample = func(sample webrtcmedia.Sample) {
+				if err := videoTrack.WriteSample(sample, nil); err != nil {
+					log.Printf("[agent] video sample error: %v", err)
+				}
+			}
+			// Forward D-ID audio → LiveKit (replaces Cartesia TTS in video mode)
+			didStream.OnAudioFrame = func(payload []byte) {
+				if err := audioTrack.WriteSample(webrtcmedia.Sample{
+					Data:     payload,
+					Duration: 20 * time.Millisecond,
+				}, nil); err != nil {
+					log.Printf("[agent] did audio error: %v", err)
+				}
+			}
 		}
 	}
 
@@ -160,19 +211,30 @@ func runSession(roomName string) {
 	pipe = p
 	pipeMu.Unlock()
 
-	// Wire synthesised Opus frames into the LiveKit track
-	pipe.OnOpusFrames = func(frames [][]byte) {
-		for _, frame := range frames {
-			if err := audioTrack.WriteSample(webrtcmedia.Sample{
-				Data:     frame,
-				Duration: 20 * time.Millisecond,
-			}, nil); err != nil {
-				log.Printf("[agent] write sample error: %v", err)
+	didVoiceID := os.Getenv("DID_VOICE_ID") // e.g. "en-US-JennyNeural"
+
+	if didStream != nil {
+		// Video mode: D-ID handles both TTS and lip sync
+		pipe.OnSpeakText = func(text string) {
+			if err := didStream.SpeakText(text, didVoiceID); err != nil {
+				log.Printf("[D-ID] speak error: %v", err)
+			}
+		}
+	} else {
+		// Audio-only mode: Cartesia TTS → Opus → LiveKit audio track
+		pipe.OnOpusFrames = func(frames [][]byte) {
+			for _, frame := range frames {
+				if err := audioTrack.WriteSample(webrtcmedia.Sample{
+					Data:     frame,
+					Duration: 20 * time.Millisecond,
+				}, nil); err != nil {
+					log.Printf("[agent] write sample error: %v", err)
+				}
 			}
 		}
 	}
 
-	// Deliver opening greeting before listening starts
+	// Deliver opening greeting
 	greeting := "Hello! I'm your AI assistant. How can I help you today?"
 	if meta := room.Metadata(); meta != "" {
 		var m map[string]any
@@ -188,6 +250,9 @@ func runSession(roomName string) {
 	go pipe.Run()
 	<-done
 	pipe.Close()
+	if didStream != nil {
+		didStream.Close()
+	}
 }
 
 const defaultPrompt = `You are a professional AI calling agent. Be natural, friendly, and concise.
