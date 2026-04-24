@@ -13,22 +13,21 @@ import (
 )
 
 const (
-	ttsRate     = 48000 // Cartesia output sample rate (Hz)
+	ttsRate     = 48000 // output sample rate (Hz)
 	ttsChannels = 1     // Mono
 	frameSize   = 960   // 20 ms frame at 48 kHz (960 samples)
 )
 
-// CartesiaTTS converts text to PCM and encodes it to Opus frames.
-type CartesiaTTS struct {
-	voiceID  string
-	language string // BCP-47 code; empty = "en"
-	model    string // sonic-english or sonic-multilingual
-	encoder  *opus.Encoder
+// DeepgramTTS converts text to PCM via Deepgram Aura and encodes to Opus frames.
+// Uses the same DEEPGRAM_API_KEY already used for STT — no new credentials needed.
+type DeepgramTTS struct {
+	model   string // e.g. "aura-asteria-en"
+	encoder *opus.Encoder
 }
 
-// NewCartesiaTTS creates a TTS engine with a reusable Opus encoder.
-// targetLang is a BCP-47 code (e.g. "es"); pass "" for English.
-func NewCartesiaTTS(targetLang string) (*CartesiaTTS, error) {
+// NewDeepgramTTS creates a TTS engine with a reusable Opus encoder.
+// targetLang is a BCP-47 code (e.g. "hi"); pass "" for English.
+func NewDeepgramTTS(targetLang string) (*DeepgramTTS, error) {
 	enc, err := opus.NewEncoder(ttsRate, ttsChannels, opus.AppVoIP)
 	if err != nil {
 		return nil, fmt.Errorf("opus encoder: %w", err)
@@ -36,24 +35,28 @@ func NewCartesiaTTS(targetLang string) (*CartesiaTTS, error) {
 	_ = enc.SetBitrate(24000)
 	_ = enc.SetComplexity(5)
 
-	voiceID := os.Getenv("CARTESIA_VOICE_ID")
-	if voiceID == "" {
-		voiceID = "a0e99841-438c-4a64-b679-ae501e7d6091"
+	// Pick voice model. Deepgram Aura 2 ships many voices; default to asteria (female).
+	// Override with TTS_VOICE env var if needed (e.g. "aura-orion-en" for male).
+	model := os.Getenv("TTS_VOICE")
+	if model == "" {
+		// Simple language → voice map
+		switch targetLang {
+		case "hi":
+			model = "aura-2-thalia-en" // closest; Deepgram Aura 2 Hindi is in beta
+		case "es":
+			model = "aura-2-luna-en"
+		case "fr":
+			model = "aura-2-stella-en"
+		default:
+			model = "aura-2-asteria-en"
+		}
 	}
-	lang := targetLang
-	if lang == "" {
-		lang = "en"
-	}
-	model := "sonic-english"
-	if lang != "en" {
-		model = "sonic-multilingual"
-	}
-	return &CartesiaTTS{voiceID: voiceID, language: lang, model: model, encoder: enc}, nil
+
+	return &DeepgramTTS{model: model, encoder: enc}, nil
 }
 
-// SynthesizeOpus converts text → PCM via Cartesia → Opus frames for LiveKit.
-// Returns a slice of 20 ms Opus frames.
-func (t *CartesiaTTS) SynthesizeOpus(text string) ([][]byte, error) {
+// SynthesizeOpus converts text → PCM via Deepgram Aura → Opus frames for LiveKit.
+func (t *DeepgramTTS) SynthesizeOpus(text string) ([][]byte, error) {
 	pcm, err := t.fetchPCM(text)
 	if err != nil {
 		return nil, err
@@ -61,38 +64,29 @@ func (t *CartesiaTTS) SynthesizeOpus(text string) ([][]byte, error) {
 	return t.encodeOpus(pcm)
 }
 
-// fetchPCM calls Cartesia and returns raw PCM s16le samples at 48 kHz.
-func (t *CartesiaTTS) fetchPCM(text string) ([]int16, error) {
-	payload := map[string]any{
-		"model_id":   t.model,
-		"transcript": text,
-		"language":   t.language,
-		"voice": map[string]any{
-			"mode": "id",
-			"id":   t.voiceID,
-		},
-		"output_format": map[string]any{
-			"container":   "raw",
-			"encoding":    "pcm_s16le",
-			"sample_rate": ttsRate,
-		},
-	}
-	body, _ := json.Marshal(payload)
+// fetchPCM calls Deepgram Aura TTS and returns raw PCM s16le samples at 48 kHz.
+// The response is raw linear16 bytes — identical layout to what Cartesia returned.
+func (t *DeepgramTTS) fetchPCM(text string) ([]int16, error) {
+	payload, _ := json.Marshal(map[string]string{"text": text})
 
-	req, _ := http.NewRequest("POST", "https://api.cartesia.ai/tts/bytes", bytes.NewReader(body))
-	req.Header.Set("X-API-Key", os.Getenv("CARTESIA_API_KEY"))
-	req.Header.Set("Cartesia-Version", "2024-06-10")
+	url := fmt.Sprintf(
+		"https://api.deepgram.com/v1/speak?model=%s&encoding=linear16&sample_rate=%d&container=none",
+		t.model, ttsRate,
+	)
+
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Token "+os.Getenv("DEEPGRAM_API_KEY"))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("cartesia request: %w", err)
+		return nil, fmt.Errorf("deepgram tts request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("cartesia %d: %s", resp.StatusCode, b)
+		return nil, fmt.Errorf("deepgram tts %d: %s", resp.StatusCode, b)
 	}
 
 	raw, err := io.ReadAll(resp.Body)
@@ -109,7 +103,7 @@ func (t *CartesiaTTS) fetchPCM(text string) ([]int16, error) {
 }
 
 // encodeOpus splits PCM into 20 ms frames and encodes each to Opus.
-func (t *CartesiaTTS) encodeOpus(pcm []int16) ([][]byte, error) {
+func (t *DeepgramTTS) encodeOpus(pcm []int16) ([][]byte, error) {
 	var frames [][]byte
 	buf := make([]byte, 4000) // max Opus frame size
 

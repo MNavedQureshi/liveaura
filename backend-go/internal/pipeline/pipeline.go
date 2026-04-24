@@ -12,7 +12,7 @@ import (
 type Pipeline struct {
 	stt *DeepgramSTT
 	llm LLM
-	tts *CartesiaTTS
+	tts *DeepgramTTS
 
 	// OnOpusFrames is called with each 20 ms Opus frame (audio-only mode).
 	OnOpusFrames func(frames [][]byte)
@@ -31,7 +31,7 @@ func New(systemPrompt, sourceLang, targetLang string) (*Pipeline, error) {
 	if err != nil {
 		return nil, err
 	}
-	tts, err := NewCartesiaTTS(targetLang)
+	tts, err := NewDeepgramTTS(targetLang)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (p *Pipeline) synth(text string) {
 		p.OnSpeakText(text)
 		return
 	}
-	// Audio-only mode: Cartesia TTS → Opus frames
+	// Audio-only mode: Deepgram Aura TTS → Opus frames
 	frames, err := p.tts.SynthesizeOpus(text)
 	if err != nil {
 		log.Printf("[TTS] error: %v", err)
