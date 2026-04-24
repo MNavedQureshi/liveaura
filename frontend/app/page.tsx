@@ -34,13 +34,21 @@ export default function HomePage() {
           </div>
           <span className="font-semibold text-white text-lg">AI Calling Agent</span>
         </div>
-        <button
-          onClick={() => setShowLauncher(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          New Call
-        </button>
+        <div className="flex items-center gap-3">
+          <a
+            href="/console"
+            className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white text-sm font-medium rounded-xl hover:bg-white/10 transition-colors"
+          >
+            Console
+          </a>
+          <button
+            onClick={() => setShowLauncher(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New Call
+          </button>
+        </div>
       </nav>
 
       {/* Hero */}
