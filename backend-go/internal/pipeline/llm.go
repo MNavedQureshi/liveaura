@@ -16,13 +16,17 @@ type LLM interface {
 	Stream(userText string, tokenC chan<- string) (string, error)
 }
 
-// NewLLM returns an Anthropic or Gemini LLM based on env vars.
-// Set LLM_PROVIDER=gemini to use Gemini; default is Anthropic.
+// NewLLM returns an LLM based on LLM_PROVIDER env var.
+// Values: "gemini", "groq", or default "anthropic".
 func NewLLM(systemPrompt string) LLM {
-	if os.Getenv("LLM_PROVIDER") == "gemini" {
+	switch os.Getenv("LLM_PROVIDER") {
+	case "gemini":
 		return newGeminiLLM(systemPrompt)
+	case "groq":
+		return newGroqLLM(systemPrompt)
+	default:
+		return newAnthropicLLM(systemPrompt)
 	}
-	return newAnthropicLLM(systemPrompt)
 }
 
 // ── Anthropic ────────────────────────────────────────────────────────────────
@@ -184,5 +188,84 @@ func (g *geminiLLM) Stream(userText string, tokenC chan<- string) (string, error
 		"role":  "model",
 		"parts": []map[string]string{{"text": full.String()}},
 	})
+	return full.String(), scanner.Err()
+}
+
+// ── Groq ─────────────────────────────────────────────────────────────────────
+// Groq uses OpenAI-compatible API. Free tier: 14,400 req/day, 6000 tokens/min.
+
+type groqLLM struct {
+	systemPrompt string
+	history      []map[string]string
+	client       *http.Client
+}
+
+func newGroqLLM(systemPrompt string) *groqLLM {
+	return &groqLLM{systemPrompt: systemPrompt, client: &http.Client{}}
+}
+
+func (g *groqLLM) Stream(userText string, tokenC chan<- string) (string, error) {
+	g.history = append(g.history, map[string]string{"role": "user", "content": userText})
+
+	model := os.Getenv("GROQ_MODEL")
+	if model == "" {
+		model = "llama-3.1-8b-instant" // fastest Groq free model
+	}
+
+	messages := append(
+		[]map[string]string{{"role": "system", "content": g.systemPrompt}},
+		g.history...,
+	)
+	payload := map[string]any{
+		"model":      model,
+		"messages":   messages,
+		"max_tokens": 1024,
+		"stream":     true,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "https://api.groq.com/openai/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("GROQ_API_KEY"))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("groq request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("groq returned %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	var full strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		choices, _ := event["choices"].([]any)
+		for _, ch := range choices {
+			choice, _ := ch.(map[string]any)
+			delta, _ := choice["delta"].(map[string]any)
+			if text, ok := delta["content"].(string); ok && text != "" {
+				full.WriteString(text)
+				tokenC <- text
+			}
+		}
+	}
+	close(tokenC)
+
+	g.history = append(g.history, map[string]string{"role": "assistant", "content": full.String()})
 	return full.String(), scanner.Err()
 }
