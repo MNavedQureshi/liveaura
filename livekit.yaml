@@ -19,13 +19,12 @@ rtc:
       - br-*
       - veth*
 
-# Built-in TURN server
+# Built-in TURN server (UDP relay only — no TLS termination needed)
 turn:
   enabled: true
   domain: LIVEKIT_DOMAIN_PLACEHOLDER
-  tls_port: 5349
   udp_port: 3478
-  external_tls: true
+  external_tls: false
 
 redis:
   address: redis:6379
