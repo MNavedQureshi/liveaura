@@ -1,18 +1,44 @@
 /**
- * Meet layout — scopes @livekit/components-styles to the /meet/* segment only.
+ * /meet — LiveKit Meet layout.
  *
- * The AI call room (/room/[roomId]) explicitly avoids this CSS because it
- * clashes with its custom cream/indigo palette. Next.js App Router only
- * loads CSS imported by a layout when that segment is active, so importing
- * it here keeps the two experiences isolated.
+ * This is the in-tree port of livekit-examples/meet. CSS imports here are
+ * scoped to the /meet/* route segment by Next.js App Router — they do NOT
+ * leak into /, /room, or /meet-lite.
+ *
+ * The lightweight cream-themed conferencing UI remains available at /meet-lite
+ * as a backup.
  */
-import "@livekit/components-styles";
 
-export const metadata = {
+import type { Metadata, Viewport } from "next";
+import { Toaster } from "react-hot-toast";
+
+import "@livekit/components-styles";
+import "@livekit/components-styles/prefabs";
+import "@/styles/meet/meet-home.css";
+
+export const metadata: Metadata = {
   title: "LiveKit Meet",
-  description: "Zoom-style multi-party audio & video conferencing",
+  description: "Open source video conferencing built on LiveKit.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#070707",
 };
 
 export default function MeetLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return (
+    <div
+      data-lk-theme="default"
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "#111",
+        color: "rgba(255,255,255,0.95)",
+      }}
+    >
+      <Toaster />
+      {children}
+    </div>
+  );
 }

@@ -113,7 +113,7 @@ function PreJoin({
   }, []);
 
   const shareLink =
-    typeof window !== "undefined" ? `${window.location.origin}/meet/${room}` : "";
+    typeof window !== "undefined" ? `${window.location.origin}/meet-lite/${room}` : "";
 
   const copy = () => {
     navigator.clipboard
@@ -154,7 +154,7 @@ function PreJoin({
         }}
       >
         <a
-          href="/meet"
+          href="/meet-lite"
           style={{
             display: "flex", alignItems: "center", gap: 10,
             textDecoration: "none", color: T.ink,
@@ -173,7 +173,7 @@ function PreJoin({
               <path d="M16 10l5-3v10l-5-3z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
             </svg>
           </div>
-          <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: -0.2 }}>LiveKit Meet</span>
+          <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: -0.2 }}>Meet Lite</span>
         </a>
       </header>
 
@@ -339,7 +339,7 @@ export default function MeetRoomPage() {
     <MeetRoom
       room={room}
       name={name}
-      onLeave={() => router.push("/meet")}
+      onLeave={() => router.push("/meet-lite")}
     />
   );
 }

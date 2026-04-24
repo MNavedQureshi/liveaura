@@ -90,6 +90,13 @@ export default function HomePage() {
             Start a meeting
           </a>
         </div>
+        <div className="mt-3 text-xs text-slate-500">
+          Prefer the lightweight cream UI?{" "}
+          <a href="/meet-lite" className="text-brand-400 hover:text-brand-300 underline-offset-2 hover:underline">
+            Try Meet Lite
+          </a>
+          .
+        </div>
       </div>
 
       {/* Features */}

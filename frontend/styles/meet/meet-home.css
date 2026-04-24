@@ -1,0 +1,63 @@
+/* Scoped dark-theme helpers for the ported upstream LiveKit Meet home page.
+   The full dark LiveKit theme is applied via `data-lk-theme="default"` on the
+   page root. These rules just pin body/html to the dark palette *inside*
+   /meet/* so the home layout works — they do not leak to other routes because
+   this CSS file is only imported from app/meet/layout.tsx. */
+
+html[data-lk-meet],
+html[data-lk-meet] body {
+  color-scheme: dark;
+  background-color: #111;
+}
+
+body[data-lk-meet-root] {
+  display: flex;
+  flex-direction: column;
+}
+
+.lk-meet-header {
+  max-width: 500px;
+  padding-inline: 2rem;
+  margin: 0 auto;
+}
+
+.lk-meet-header > img {
+  display: block;
+  margin: auto;
+  max-width: 100%;
+}
+
+.lk-meet-header > h2 {
+  font-family: 'TWK Everett', sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 1.25rem;
+  line-height: 144%;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.lk-meet-footer {
+  width: 100%;
+  padding: 1.5rem 2rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  background-color: var(--lk-bg);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.lk-meet-footer a,
+.lk-meet-header h2 a {
+  color: #ff6352;
+  text-decoration-color: #a33529;
+  text-underline-offset: 0.125em;
+}
+
+.lk-meet-footer a:hover,
+.lk-meet-header h2 a {
+  text-decoration-color: #ff6352;
+}
+
+.lk-meet-header h2 a {
+  text-decoration: none;
+}
