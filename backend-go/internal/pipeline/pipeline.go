@@ -3,6 +3,7 @@ package pipeline
 import (
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
