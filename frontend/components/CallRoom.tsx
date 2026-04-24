@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * CallRoom — custom WebRTC call UI.
+ *
+ * Intentionally does NOT import @livekit/components-styles or use any
+ * LiveKit visual components (AudioConference, ControlBar, etc.).
+ * Only LiveKitRoom (WebRTC context) and RoomAudioRenderer (invisible,
+ * plays remote audio) come from LiveKit. Everything visible is built
+ * with inline styles matching the console cream/indigo palette.
+ */
+
 import { useState, useEffect } from "react";
 import {
   LiveKitRoom,
@@ -7,11 +17,10 @@ import {
   useLocalParticipant,
   useRemoteParticipants,
   useIsSpeaking,
-  VideoConference,
 } from "@livekit/components-react";
 import type { RemoteParticipant } from "livekit-client";
 
-/* ─── Design tokens (matches console light theme) ─────────────────── */
+/* ─── Design tokens ─────────────────────────────────────────────── */
 const T = {
   bg:          "#F7F3EA",
   surface:     "#FDFBF5",
@@ -26,26 +35,25 @@ const T = {
   primaryHi:   "#332E75",
   primaryInk:  "#FDFBF5",
   primarySoft: "#E5E0F5",
+  primarySoftInk: "#2C2773",
   accent:      "#B08D57",
   red:         "#B64242",
   redSoft:     "#F3D9D4",
-  redInk:      "#842828",
   green:       "#4F7A4A",
-  greenSoft:   "#DFEBD8",
   shadow1:     "0 1px 2px rgba(74,56,24,0.06)",
   shadowMd:    "0 4px 10px -2px rgba(74,56,24,0.12), 0 2px 4px -1px rgba(74,56,24,0.06)",
   sans:        "'Inter', -apple-system, system-ui, sans-serif",
-  mono:        "'JetBrains Mono', ui-monospace, monospace",
+  mono:        "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
   r3: 8, r4: 10, r5: 12, r6: 16,
 } as const;
 
-/* ─── Waveform (animated bars, driven by a tick timer) ────────────── */
-function Waveform({ active, color, bars = 30, height = 28 }: {
+/* ─── Animated waveform ─────────────────────────────────────────── */
+function Waveform({ active, color, bars = 28, height = 28 }: {
   active: boolean; color: string; bars?: number; height?: number;
 }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    if (!active) return;
+    if (!active) { setTick(0); return; }
     const id = setInterval(() => setTick(t => t + 1), 130);
     return () => clearInterval(id);
   }, [active]);
@@ -56,9 +64,9 @@ function Waveform({ active, color, bars = 30, height = 28 }: {
         const h   = active ? 4 + amp * (height - 4) : 3;
         return (
           <span key={i} style={{
-            width: 2.5, height: h, borderRadius: 2,
-            background: color,
-            opacity: active ? 0.35 + amp * 0.65 : 0.18,
+            display: "block", width: 2.5, height: h,
+            borderRadius: 2, background: color,
+            opacity: active ? 0.3 + amp * 0.7 : 0.15,
             transition: "height 130ms ease-out, opacity 130ms ease-out",
           }}/>
         );
@@ -67,118 +75,130 @@ function Waveform({ active, color, bars = 30, height = 28 }: {
   );
 }
 
-/* ─── Inline SVG icons ────────────────────────────────────────────── */
-const MicOnIcon = ({ c = T.ink2 }: { c?: string }) => (
-  <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-    <rect x="6" y="2" width="4" height="8" rx="2" stroke={c} strokeWidth="1.4"/>
-    <path d="M3.5 7.5v.5a4.5 4.5 0 009 0v-.5M8 12.5V14M5.5 14h5"
-          stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
-  </svg>
-);
-const MicOffIcon = ({ c = "#fff" }: { c?: string }) => (
-  <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-    <path d="M2 2l12 12" stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
-    <path d="M9.5 9.9A2 2 0 016 8V4m0-2a2 2 0 014 0v4" stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
-    <path d="M3.5 8a4.5 4.5 0 007.8 3M12.4 9.4c.07-.3.1-.6.1-.9v-.5M8 12.5V14M5.5 14h5"
-          stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
-  </svg>
-);
-const PhoneOffIcon = ({ c = "#fff" }: { c?: string }) => (
-  <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-    <path d="M3.5 3.5c0-.55.45-1 1-1h1.8c.4 0 .76.24.92.62l1 2.5c.15.37.04.79-.27 1.04l-1.1.85c.9 1.85 2.43 3.37 4.28 4.27l.85-1.1c.26-.3.67-.41 1.04-.27l2.5 1c.38.15.62.5.62.91V13c0 .55-.45 1-1 1C7.83 14 2.5 8.67 2.5 2.5c0-.55.45-1 1-1z"
-          stroke={c} strokeWidth="1.4"/>
-    <path d="M2 2l12 12" stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
-  </svg>
-);
-const CopyIcon = () => (
-  <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
-    <rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
-    <path d="M3 11V4a1 1 0 011-1h7" stroke="currentColor" strokeWidth="1.4"/>
-  </svg>
-);
-const CheckIcon = () => (
-  <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
-    <path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.6"
-          strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-const BotIcon = () => (
-  <svg width={30} height={30} viewBox="0 0 16 16" fill="none">
-    <rect x="3" y="5" width="10" height="8" rx="2" stroke="#fff" strokeWidth="1.4"/>
-    <circle cx="6" cy="9" r="1.1" fill="#fff"/>
-    <circle cx="10" cy="9" r="1.1" fill="#fff"/>
-    <path d="M8 5V2.5M6 2.5h4" stroke="#fff" strokeWidth="1.4" strokeLinecap="round"/>
-  </svg>
-);
-
-/* ─── Button ─────────────────────────────────────────────────────── */
-function Btn({
-  children, onClick, kind = "default", icon, style: sx = {},
-}: {
+/* ─── Button ────────────────────────────────────────────────────── */
+function Btn({ children, onClick, kind = "default", icon, style: sx = {} }: {
   children: React.ReactNode; onClick?: () => void;
   kind?: "default" | "primary" | "danger"; icon?: React.ReactNode;
   style?: React.CSSProperties;
 }) {
   const [hov, setHov] = useState(false);
-  const styles = {
-    primary: { bg: hov ? T.primaryHi : T.primary, fg: T.primaryInk, bd: "transparent" },
-    danger:  { bg: hov ? "#a33" : T.red, fg: "#fff", bd: "transparent" },
-    default: { bg: hov ? T.surfaceAlt : T.surface, fg: T.ink2, bd: T.border },
+  const map = {
+    primary: { bg: hov ? T.primaryHi : T.primary, fg: T.primaryInk, border: "none" },
+    danger:  { bg: hov ? "#9b2020" : T.red,        fg: "#fff",        border: "none" },
+    default: { bg: hov ? T.surfaceAlt : T.surface,  fg: T.ink2, border: `1px solid ${T.border}` },
   }[kind];
   return (
-    <button onClick={onClick}
-      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       style={{
-        height: 42, padding: "0 18px",
-        fontFamily: T.sans, fontSize: 13.5, fontWeight: 500,
-        color: styles.fg, background: styles.bg,
-        border: styles.bd === "transparent" ? "none" : `1px solid ${styles.bd}`,
+        height: 44, padding: "0 20px",
+        fontFamily: T.sans, fontSize: 14, fontWeight: 500,
+        color: map.fg, background: map.bg, border: map.border,
         borderRadius: T.r4, cursor: "pointer",
-        display: "inline-flex", alignItems: "center", gap: 8,
-        boxShadow: kind === "default" ? T.shadow1 : `0 2px 6px ${kind === "danger" ? T.red : T.primary}33`,
+        display: "inline-flex", alignItems: "center", gap: 9,
+        boxShadow: kind === "default" ? T.shadow1
+          : `0 2px 8px ${kind === "danger" ? T.red : T.primary}44`,
         transition: "background 120ms ease",
         whiteSpace: "nowrap", ...sx,
-      }}>
+      }}
+    >
       {icon}{children}
     </button>
   );
 }
 
-/* ─── Agent avatar tile ──────────────────────────────────────────── */
-function AgentTile({ agentName, isSpeaking, isConnected }: {
-  agentName: string; isSpeaking: boolean; isConnected: boolean;
+/* ─── Icons ─────────────────────────────────────────────────────── */
+const MicOnSVG = () => (
+  <svg width={17} height={17} viewBox="0 0 16 16" fill="none">
+    <rect x="6" y="2" width="4" height="8" rx="2" stroke={T.ink2} strokeWidth="1.4"/>
+    <path d="M3.5 7.5v.5a4.5 4.5 0 009 0v-.5M8 12.5V14M5.5 14h5"
+          stroke={T.ink2} strokeWidth="1.4" strokeLinecap="round"/>
+  </svg>
+);
+const MicOffSVG = () => (
+  <svg width={17} height={17} viewBox="0 0 16 16" fill="none">
+    <path d="M2 2l12 12" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+    <path d="M9.5 9.8A2 2 0 016 8V3.9M6 2a2 2 0 014 0v4.1"
+          stroke="#fff" strokeWidth="1.4" strokeLinecap="round"/>
+    <path d="M3.6 8.2A4.5 4.5 0 0011.9 11M12.4 9.2c.07-.23.1-.47.1-.7v-.5M8 12.5V14M5.5 14h5"
+          stroke="#fff" strokeWidth="1.4" strokeLinecap="round"/>
+  </svg>
+);
+const EndCallSVG = () => (
+  <svg width={17} height={17} viewBox="0 0 24 24" fill="none">
+    <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.14 9.8 19.79 19.79 0 01.07 1.18 2 2 0 012.06 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.13 7.91a16 16 0 006.97 6.97l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"
+          stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M2 2l20 20" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+  </svg>
+);
+const CopySVG = () => (
+  <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+    <rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
+    <path d="M3 11V4a1 1 0 011-1h7" stroke="currentColor" strokeWidth="1.4"/>
+  </svg>
+);
+const CheckSVG = () => (
+  <svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+    <path d="M3 8.5l3 3 7-7" stroke={T.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+const BotSVG = () => (
+  <svg width={32} height={32} viewBox="0 0 16 16" fill="none">
+    <rect x="3" y="5" width="10" height="8" rx="2" stroke="rgba(255,255,255,0.9)" strokeWidth="1.3"/>
+    <circle cx="6" cy="9" r="1.1" fill="rgba(255,255,255,0.9)"/>
+    <circle cx="10" cy="9" r="1.1" fill="rgba(255,255,255,0.9)"/>
+    <path d="M8 5V2.5M6 2.5h4" stroke="rgba(255,255,255,0.9)" strokeWidth="1.3" strokeLinecap="round"/>
+  </svg>
+);
+const UserSVG = ({ muted }: { muted: boolean }) => (
+  <svg width={28} height={28} viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="8" r="4" stroke={muted ? T.red : T.ink3} strokeWidth="1.5"/>
+    <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke={muted ? T.red : T.ink3} strokeWidth="1.5" strokeLinecap="round"/>
+  </svg>
+);
+
+/* ─── Agent tile ────────────────────────────────────────────────── */
+function AgentTile({ name, speaking, connected }: {
+  name: string; speaking: boolean; connected: boolean;
 }) {
-  const statusText  = !isConnected ? "Joining the room…"
-    : isSpeaking    ? "Speaking"
+  const status = !connected ? "Joining the room…"
+    : speaking ? "Speaking"
     : "Listening";
-  const dotColor    = isSpeaking ? T.primary : isConnected ? T.green : T.ink4;
-  const labelColor  = isSpeaking ? T.primary : isConnected ? T.green : T.ink3;
+  const dotBg = speaking ? T.primary : connected ? T.green : T.ink4;
+  const textColor = speaking ? T.primary : connected ? T.green : T.ink3;
 
   return (
     <div style={{
-      flex: 1, background: T.surface, border: `1px solid ${T.border}`,
-      borderRadius: T.r6, padding: "32px 24px", boxShadow: T.shadowMd,
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 22,
+      flex: 1, minWidth: 0,
+      background: T.surface, border: `1px solid ${T.border}`,
+      borderRadius: T.r6, padding: "36px 28px",
+      boxShadow: T.shadowMd,
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 24,
     }}>
-      {/* Animated orb */}
-      <div style={{ position: "relative", width: 100, height: 100 }}>
+      {/* Orb avatar */}
+      <div style={{ position: "relative", width: 108, height: 108 }}>
         <div style={{
           position: "absolute", inset: 0, borderRadius: "50%",
-          background: `radial-gradient(circle at 32% 28%, ${T.primary} 0%, ${T.accent} 55%, #1e0f44 100%)`,
-          boxShadow: `0 8px 32px ${T.primary}44`,
-          animation: isConnected ? "roomOrbFloat 4s ease-in-out infinite" : "none",
+          background: `radial-gradient(circle at 32% 28%, ${T.primary} 0%, ${T.accent} 55%, #1a0a40 100%)`,
+          boxShadow: speaking
+            ? `0 0 0 0 ${T.primary}44, 0 10px 40px ${T.primary}44`
+            : `0 10px 40px ${T.primary}33`,
+          animation: connected ? "orbFloat 4s ease-in-out infinite" : "none",
+          transition: "box-shadow 400ms ease",
         }}/>
         {/* Gloss */}
         <div style={{
-          position: "absolute", inset: 10, borderRadius: "50%",
-          background: "radial-gradient(circle at 38% 36%, rgba(255,255,255,0.32) 0%, transparent 55%)",
+          position: "absolute", inset: "12%", borderRadius: "50%",
+          background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.28) 0%, transparent 60%)",
         }}/>
-        {/* Pulse ring when speaking */}
-        {isSpeaking && (
+        {/* Speaking ring */}
+        {speaking && (
           <div style={{
-            position: "absolute", inset: -8, borderRadius: "50%",
-            border: `1.5px solid ${T.primary}44`,
-            animation: "roomRingPulse 1.8s ease-out infinite",
+            position: "absolute", inset: -10, borderRadius: "50%",
+            border: `2px solid ${T.primary}33`,
+            animation: "ringPulse 1.6s ease-out infinite",
           }}/>
         )}
         {/* Bot icon */}
@@ -186,196 +206,191 @@ function AgentTile({ agentName, isSpeaking, isConnected }: {
           position: "absolute", inset: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
-          <BotIcon/>
+          <BotSVG/>
         </div>
       </div>
 
       {/* Name + status */}
       <div style={{ textAlign: "center" }}>
         <div style={{
-          fontFamily: T.sans, fontSize: 18, fontWeight: 600,
-          color: T.ink, letterSpacing: -0.3,
-        }}>{agentName}</div>
-
+          fontFamily: T.sans, fontSize: 20, fontWeight: 600,
+          color: T.ink, letterSpacing: -0.3, lineHeight: 1.2,
+        }}>{name}</div>
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "center",
-          gap: 6, marginTop: 8,
+          gap: 7, marginTop: 10,
         }}>
           <span style={{
-            width: 7, height: 7, borderRadius: "50%", background: dotColor,
-            flexShrink: 0, transition: "background 400ms ease",
-            boxShadow: isSpeaking ? `0 0 6px ${T.primary}` : "none",
+            width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+            background: dotBg,
+            boxShadow: speaking ? `0 0 8px ${T.primary}` : "none",
+            transition: "background 400ms ease, box-shadow 400ms ease",
           }}/>
           <span style={{
-            fontFamily: T.sans, fontSize: 13.5, color: labelColor,
-            fontWeight: isSpeaking ? 500 : 400,
+            fontFamily: T.sans, fontSize: 14,
+            color: textColor, fontWeight: speaking ? 600 : 400,
             transition: "color 400ms ease",
-          }}>{statusText}</span>
+          }}>{status}</span>
         </div>
       </div>
 
       {/* Waveform */}
-      <div style={{ width: "100%", padding: "0 8px" }}>
-        <Waveform active={isSpeaking} color={T.primary} bars={38} height={36}/>
+      <div style={{ width: "100%", padding: "0 12px" }}>
+        <Waveform active={speaking} color={T.primary} bars={40} height={40}/>
       </div>
 
-      {/* Hint */}
+      {/* Helper text */}
       <div style={{
-        fontFamily: T.sans, fontSize: 12, color: T.ink3,
-        textAlign: "center", lineHeight: 1.6, maxWidth: 240,
+        fontFamily: T.sans, fontSize: 12.5, color: T.ink3,
+        textAlign: "center", lineHeight: 1.7, maxWidth: 260,
       }}>
-        {isConnected
-          ? isSpeaking
-            ? "The agent is responding. It will pause when you speak."
-            : "The agent is listening. Speak naturally when ready."
-          : "Establishing secure connection to the AI agent…"
-        }
+        {!connected && "Establishing secure WebRTC connection…"}
+        {connected && speaking && "The agent is responding — it will pause automatically when you speak."}
+        {connected && !speaking && "The agent is waiting for you to speak. Talk naturally, at any pace."}
       </div>
     </div>
   );
 }
 
-/* ─── Agent with speaking detection (hook must be unconditional) ─── */
-function AgentTileWithSpeaking({ participant, agentName }: {
-  participant: RemoteParticipant; agentName: string;
+/* ─── Agent with speaking hook — split so hook is always called ─── */
+function AgentTileConnected({ participant, name }: {
+  participant: RemoteParticipant; name: string;
 }) {
-  const isSpeaking = useIsSpeaking(participant);
-  return <AgentTile agentName={agentName} isSpeaking={isSpeaking} isConnected/>;
+  const speaking = useIsSpeaking(participant);
+  return <AgentTile name={name} speaking={speaking} connected/>;
 }
 
 /* ─── Your microphone tile ──────────────────────────────────────── */
-function YourTile({ isMuted }: { isMuted: boolean }) {
+function YouTile({ muted }: { muted: boolean }) {
   return (
     <div style={{
-      width: 210, flexShrink: 0,
+      width: 220, flexShrink: 0,
       background: T.surface,
-      border: `1px solid ${isMuted ? "#FBC7C7" : T.border}`,
-      borderRadius: T.r6, padding: "24px 20px", boxShadow: T.shadow1,
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
+      border: `1.5px solid ${muted ? "#f0b8b8" : T.border}`,
+      borderRadius: T.r6, padding: "28px 20px",
+      boxShadow: T.shadow1,
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
       transition: "border-color 300ms ease",
     }}>
-      {/* Mic avatar */}
+      {/* Avatar circle */}
       <div style={{
-        width: 64, height: 64, borderRadius: "50%",
-        background: isMuted
-          ? "linear-gradient(135deg, #FBC7C7, #F3D9D4)"
-          : `linear-gradient(135deg, ${T.surfaceAlt}, ${T.border})`,
+        width: 72, height: 72, borderRadius: "50%",
+        background: muted
+          ? "linear-gradient(135deg, #fddcdc, #f3c0c0)"
+          : `linear-gradient(135deg, ${T.surfaceAlt}, #d9cdb0)`,
+        border: `1.5px solid ${muted ? "#f0b8b8" : T.borderSoft}`,
         display: "flex", alignItems: "center", justifyContent: "center",
-        border: `1.5px solid ${isMuted ? "#FBC7C7" : T.borderSoft}`,
         transition: "all 300ms ease",
       }}>
-        {isMuted
-          ? <MicOffIcon c={T.red}/>
-          : <MicOnIcon  c={T.ink3}/>
-        }
+        <UserSVG muted={muted}/>
       </div>
 
       {/* Labels */}
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>
+        <div style={{ fontFamily: T.sans, fontSize: 15, fontWeight: 600, color: T.ink }}>
           You
         </div>
         <div style={{
-          fontFamily: T.sans, fontSize: 12, marginTop: 4,
-          color: isMuted ? T.red : T.green, fontWeight: 500,
+          fontFamily: T.sans, fontSize: 13, fontWeight: 500, marginTop: 5,
+          color: muted ? T.red : T.green,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
         }}>
-          {isMuted ? "Microphone off" : "Microphone on"}
+          <span style={{
+            width: 7, height: 7, borderRadius: "50%",
+            background: muted ? T.red : T.green,
+          }}/>
+          {muted ? "Microphone off" : "Microphone on"}
         </div>
-        <div style={{ fontFamily: T.sans, fontSize: 11.5, color: T.ink3, marginTop: 2 }}>
-          {isMuted ? "Tap below to unmute" : "Agent can hear you"}
+        <div style={{
+          fontFamily: T.sans, fontSize: 12, color: T.ink3, marginTop: 4, lineHeight: 1.5,
+        }}>
+          {muted ? "Tap Unmute below\nto speak to the agent" : "Agent can hear you"}
         </div>
       </div>
 
       {/* Waveform */}
-      <Waveform active={!isMuted} color={isMuted ? T.red : T.green} bars={20} height={22}/>
+      <Waveform active={!muted} color={muted ? T.red : T.green} bars={20} height={24}/>
     </div>
   );
 }
 
-/* ─── Main room UI (inside LiveKitRoom context) ──────────────────── */
-function RoomInner({
-  agentName, videoEnabled, onDisconnect, roomName,
-}: {
-  agentName: string; videoEnabled: boolean;
-  onDisconnect: () => void; roomName: string;
+/* ─── Inner component — uses LiveKit hooks ──────────────────────── */
+function RoomUI({ agentName, onDisconnect, roomName }: {
+  agentName: string; onDisconnect: () => void; roomName: string;
 }) {
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const remotes = useRemoteParticipants();
   const [copied, setCopied] = useState(false);
-  const agentParticipant = remotes[0] ?? null;
 
-  const toggleMic  = () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
-  const copyLink   = () => {
+  const agentParticipant = (remotes[0] as RemoteParticipant | undefined) ?? null;
+
+  const toggleMic = () =>
+    localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+
+  const copyLink = () => {
     navigator.clipboard.writeText(window.location.href).catch(() => {});
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 2200);
   };
 
   return (
     <div style={{
       flex: 1, display: "flex", flexDirection: "column",
-      padding: 24, gap: 16, overflowY: "auto", background: T.bg,
+      padding: 24, gap: 16, overflowY: "auto",
+      fontFamily: T.sans, background: T.bg,
     }}>
-      {/* ── Hint banner ─────────────────────────────────────────── */}
+
+      {/* ── Hint banner ───────────────────────────────────────── */}
       <div style={{
-        padding: "11px 16px", borderRadius: T.r4,
-        background: T.primarySoft, border: "1px solid #cfc8f0",
+        padding: "12px 18px", borderRadius: T.r4,
+        background: T.primarySoft, border: `1px solid #cfc8f0`,
         display: "flex", alignItems: "flex-start", gap: 10,
-        fontFamily: T.sans, fontSize: 13, color: T.primary, lineHeight: 1.55,
+        fontSize: 13.5, color: T.primarySoftInk, lineHeight: 1.6,
       }}>
-        <span style={{ fontSize: 16, flexShrink: 0 }}>💡</span>
+        <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.4 }}>💡</span>
         <span>
-          <b>Speak naturally</b> — the AI agent listens and responds in under 400 ms.
+          <strong>Speak naturally</strong> — the AI agent listens and responds in under 400 ms.
           {!isMicrophoneEnabled && (
             <span style={{ color: T.red }}>
-              {" "}<b>Your microphone is off.</b> Tap <b>Unmute</b> below to start speaking.
+              {" "}<strong>Your microphone is off.</strong> Tap <strong>Unmute microphone</strong> below to start speaking.
             </span>
           )}
         </span>
       </div>
 
-      {/* ── Participant tiles ────────────────────────────────────── */}
-      {videoEnabled ? (
-        /* Video mode — LiveKit's built-in layout, just restyled */
-        <div style={{
-          flex: 1, minHeight: 300, borderRadius: T.r5, overflow: "hidden",
-          background: "#111", boxShadow: T.shadowMd,
-        }}>
-          <VideoConference/>
-        </div>
-      ) : (
-        /* Audio-only — our custom illustrated tiles */
-        <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0, alignItems: "stretch" }}>
-          {agentParticipant
-            ? <AgentTileWithSpeaking participant={agentParticipant} agentName={agentName}/>
-            : <AgentTile agentName={agentName} isSpeaking={false} isConnected={false}/>
-          }
-          <YourTile isMuted={!isMicrophoneEnabled}/>
-        </div>
-      )}
+      {/* ── Participant area ──────────────────────────────────── */}
+      <div style={{ flex: 1, display: "flex", gap: 16, minHeight: 0 }}>
+        {agentParticipant
+          ? <AgentTileConnected participant={agentParticipant} name={agentName}/>
+          : <AgentTile name={agentName} speaking={false} connected={false}/>
+        }
+        <YouTile muted={!isMicrophoneEnabled}/>
+      </div>
 
-      {/* ── Control bar ─────────────────────────────────────────── */}
+      {/* ── Control bar ──────────────────────────────────────── */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-        padding: "14px 20px",
-        background: T.surface, border: `1px solid ${T.border}`,
+        display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10,
+        padding: "16px 20px",
+        background: T.surface,
+        border: `1px solid ${T.border}`,
         borderRadius: T.r5, boxShadow: T.shadow1,
       }}>
-        {/* Mic toggle — most important, left-anchored */}
+        {/* Mic — most important action */}
         <Btn
           kind={isMicrophoneEnabled ? "default" : "danger"}
-          icon={isMicrophoneEnabled
-            ? <MicOnIcon c={T.ink2}/>
-            : <MicOffIcon c="#fff"/>}
+          icon={isMicrophoneEnabled ? <MicOnSVG/> : <MicOffSVG/>}
           onClick={toggleMic}
-          style={{ minWidth: 178 }}
+          style={{ minWidth: 196 }}
         >
           {isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone"}
         </Btn>
 
-        {/* Copy invite link */}
-        <Btn icon={copied ? <CheckIcon/> : <CopyIcon/>} onClick={copyLink}
-             style={{ color: copied ? T.green : undefined }}>
+        {/* Copy link */}
+        <Btn
+          icon={copied ? <CheckSVG/> : <CopySVG/>}
+          onClick={copyLink}
+          style={{ color: copied ? T.green : T.ink2 }}
+        >
           {copied ? "Link copied!" : "Copy invite link"}
         </Btn>
 
@@ -385,8 +400,7 @@ function RoomInner({
         {/* Connection badge */}
         <div style={{
           display: "flex", alignItems: "center", gap: 6,
-          fontFamily: T.sans, fontSize: 12.5,
-          color: agentParticipant ? T.green : T.ink3,
+          fontSize: 13, color: agentParticipant ? T.green : T.ink3,
         }}>
           <span style={{
             width: 7, height: 7, borderRadius: "50%",
@@ -398,30 +412,26 @@ function RoomInner({
         {/* Room ID */}
         <span style={{
           fontFamily: T.mono, fontSize: 11, color: T.ink4,
-          background: T.surfaceAlt, padding: "3px 8px",
+          background: T.surfaceAlt, padding: "4px 10px",
           borderRadius: T.r3, border: `1px solid ${T.borderSoft}`,
         }}>{roomName}</span>
 
-        {/* End call — danger, right-anchored */}
-        <Btn kind="danger" icon={<PhoneOffIcon/>} onClick={onDisconnect}>
+        {/* End call */}
+        <Btn kind="danger" icon={<EndCallSVG/>} onClick={onDisconnect}>
           End call
         </Btn>
       </div>
 
-      {/* RoomAudioRenderer is invisible but MUST be here to play agent audio */}
+      {/* Invisible: plays the agent's audio */}
       <RoomAudioRenderer/>
     </div>
   );
 }
 
-/* ─── Public component ───────────────────────────────────────────── */
+/* ─── Public component ──────────────────────────────────────────── */
 export interface CallRoomProps {
-  token:        string;
-  serverUrl:    string;
-  roomName:     string;
-  videoEnabled: boolean;
-  agentName:    string;
-  onDisconnect: () => void;
+  token: string; serverUrl: string; roomName: string;
+  videoEnabled: boolean; agentName: string; onDisconnect: () => void;
 }
 
 export default function CallRoom({
@@ -430,37 +440,23 @@ export default function CallRoom({
   return (
     <>
       <style>{`
-        @keyframes roomOrbFloat  { 0%,100% { transform:translateY(0);   }
-                                   50%      { transform:translateY(-7px); } }
-        @keyframes roomRingPulse { 0%   { transform:scale(1);   opacity:0.5; }
-                                   100% { transform:scale(1.55); opacity:0;   } }
-        /* LiveKit overrides — keep it light */
-        :root {
-          --lk-theme-color: 63,58,140;
-          --lk-bg: ${T.bg};
-          --lk-bg2: ${T.surface};
-          --lk-bg3: ${T.surfaceAlt};
-          --lk-border-color: ${T.border};
-          --lk-control-bar-bg: ${T.surface};
-        }
-        [data-lk-theme] { font-family: ${T.sans}; }
+        @keyframes orbFloat  { 0%,100%{transform:translateY(0);}  50%{transform:translateY(-8px);} }
+        @keyframes ringPulse { 0%{transform:scale(1);opacity:.5;} 100%{transform:scale(1.6);opacity:0;} }
       `}</style>
 
+      {/*
+        LiveKitRoom: handles WebRTC connection only.
+        NO data-lk-theme — avoids importing LiveKit's dark CSS theme.
+      */}
       <LiveKitRoom
         token={token}
         serverUrl={serverUrl}
         audio={true}
         video={videoEnabled}
         onDisconnected={onDisconnect}
-        data-lk-theme="default"
-        style={{ flex: 1, display: "flex", flexDirection: "column" }}
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
       >
-        <RoomInner
-          agentName={agentName}
-          videoEnabled={videoEnabled}
-          onDisconnect={onDisconnect}
-          roomName={roomName}
-        />
+        <RoomUI agentName={agentName} onDisconnect={onDisconnect} roomName={roomName}/>
       </LiveKitRoom>
     </>
   );

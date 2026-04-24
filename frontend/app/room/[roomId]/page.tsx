@@ -1,6 +1,8 @@
 "use client";
 
-import "@livekit/components-styles";
+// NOTE: @livekit/components-styles is intentionally NOT imported here.
+// Importing it would apply LiveKit's dark CSS globally, overriding our
+// custom cream/indigo palette. We use inline styles exclusively.
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import CallRoom from "@/components/CallRoom";
