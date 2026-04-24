@@ -11,32 +11,38 @@ import (
 	"strings"
 )
 
-// AnthropicLLM holds a conversation with Claude and streams responses.
+// LLM is the common interface for any language model backend.
+type LLM interface {
+	Stream(userText string, tokenC chan<- string) (string, error)
+}
+
+// NewLLM returns an Anthropic or Gemini LLM based on env vars.
+// Set LLM_PROVIDER=gemini to use Gemini; default is Anthropic.
+func NewLLM(systemPrompt string) LLM {
+	if os.Getenv("LLM_PROVIDER") == "gemini" {
+		return newGeminiLLM(systemPrompt)
+	}
+	return newAnthropicLLM(systemPrompt)
+}
+
+// ── Anthropic ────────────────────────────────────────────────────────────────
+
 type AnthropicLLM struct {
 	SystemPrompt string
 	history      []map[string]string
 	client       *http.Client
 }
 
-// NewAnthropicLLM creates a new stateful LLM session.
-func NewAnthropicLLM(systemPrompt string) *AnthropicLLM {
-	return &AnthropicLLM{
-		SystemPrompt: systemPrompt,
-		client:       &http.Client{},
-	}
+func newAnthropicLLM(systemPrompt string) *AnthropicLLM {
+	return &AnthropicLLM{SystemPrompt: systemPrompt, client: &http.Client{}}
 }
 
-// Stream sends userText and streams response tokens to tokenC.
-// tokenC is closed when the response is complete.
-// Returns the full response text and any error.
 func (a *AnthropicLLM) Stream(userText string, tokenC chan<- string) (string, error) {
-	a.history = append(a.history, map[string]string{
-		"role": "user", "content": userText,
-	})
+	a.history = append(a.history, map[string]string{"role": "user", "content": userText})
 
 	model := os.Getenv("ANTHROPIC_MODEL")
 	if model == "" {
-		model = "claude-haiku-4-5-20251001" // fastest/cheapest for voice
+		model = "claude-haiku-4-5-20251001"
 	}
 	payload := map[string]any{
 		"model":      model,
@@ -89,9 +95,94 @@ func (a *AnthropicLLM) Stream(userText string, tokenC chan<- string) (string, er
 	}
 	close(tokenC)
 
-	// Append assistant response to history for multi-turn context
-	a.history = append(a.history, map[string]string{
-		"role": "assistant", "content": full.String(),
+	a.history = append(a.history, map[string]string{"role": "assistant", "content": full.String()})
+	return full.String(), scanner.Err()
+}
+
+// ── Gemini ───────────────────────────────────────────────────────────────────
+
+type geminiLLM struct {
+	systemPrompt string
+	history      []map[string]any
+	client       *http.Client
+}
+
+func newGeminiLLM(systemPrompt string) *geminiLLM {
+	return &geminiLLM{systemPrompt: systemPrompt, client: &http.Client{}}
+}
+
+func (g *geminiLLM) Stream(userText string, tokenC chan<- string) (string, error) {
+	g.history = append(g.history, map[string]any{
+		"role":  "user",
+		"parts": []map[string]string{{"text": userText}},
+	})
+
+	model := os.Getenv("GEMINI_MODEL")
+	if model == "" {
+		model = "gemini-1.5-flash"
+	}
+	apiKey := os.Getenv("GEMINI_API_KEY")
+
+	payload := map[string]any{
+		"system_instruction": map[string]any{
+			"parts": []map[string]string{{"text": g.systemPrompt}},
+		},
+		"contents": g.history,
+		"generationConfig": map[string]any{
+			"maxOutputTokens": 1024,
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	url := fmt.Sprintf(
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s",
+		model, apiKey,
+	)
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gemini request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("gemini returned %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	var full strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		var event map[string]any
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		candidates, _ := event["candidates"].([]any)
+		for _, c := range candidates {
+			cand, _ := c.(map[string]any)
+			content, _ := cand["content"].(map[string]any)
+			parts, _ := content["parts"].([]any)
+			for _, p := range parts {
+				part, _ := p.(map[string]any)
+				if text, ok := part["text"].(string); ok && text != "" {
+					full.WriteString(text)
+					tokenC <- text
+				}
+			}
+		}
+	}
+	close(tokenC)
+
+	g.history = append(g.history, map[string]any{
+		"role":  "model",
+		"parts": []map[string]string{{"text": full.String()}},
 	})
 	return full.String(), scanner.Err()
 }

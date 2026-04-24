@@ -10,7 +10,7 @@ import (
 // Call New() to create, then Run() to start (blocking).
 type Pipeline struct {
 	stt *DeepgramSTT
-	llm *AnthropicLLM
+	llm LLM
 	tts *CartesiaTTS
 
 	// OnOpusFrames is called with each 20 ms Opus frame to publish into LiveKit.
@@ -34,7 +34,7 @@ func New(systemPrompt, sourceLang, targetLang string) (*Pipeline, error) {
 	}
 	return &Pipeline{
 		stt: stt,
-		llm: NewAnthropicLLM(buildSystemPrompt(systemPrompt, sourceLang, targetLang)),
+		llm: NewLLM(buildSystemPrompt(systemPrompt, sourceLang, targetLang)),
 		tts: tts,
 	}, nil
 }
