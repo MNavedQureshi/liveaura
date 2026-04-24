@@ -44,7 +44,7 @@ func NewDeepgramSTT() (*DeepgramSTT, error) {
 		"&channels=1" +
 		"&smart_format=true" +
 		"&interim_results=false" +
-		"&endpointing=300"
+		"&endpointing=150"
 
 	header := map[string][]string{
 		"Authorization": {"Token " + key},

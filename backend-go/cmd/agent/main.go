@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ai-calling-agent/internal/lkclient"
@@ -75,9 +76,10 @@ func runSession(roomName string) {
 	}
 
 	var (
-		pipe    *pipeline.Pipeline
-		pipeMu  sync.Mutex
-		done    = make(chan struct{})
+		pipe      *pipeline.Pipeline
+		pipeMu    sync.Mutex
+		done      = make(chan struct{})
+		speaking  int32 // atomic: 1 when LLM/TTS is running, prevents overlap
 	)
 
 	room, err := lksdk.ConnectToRoomWithToken(

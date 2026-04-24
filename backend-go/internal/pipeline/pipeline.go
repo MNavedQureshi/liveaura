@@ -72,6 +72,9 @@ func (p *Pipeline) SpeakText(text string) {
 	p.synth(text)
 }
 
+// IsSpeaking lets the caller check if the agent is currently generating audio.
+var IsSpeaking int32 // atomic
+
 // Run blocks, consuming STT transcripts and driving the LLM→TTS loop.
 // Returns when the STT connection closes (room disconnect).
 func (p *Pipeline) Run() {
@@ -80,7 +83,14 @@ func (p *Pipeline) Run() {
 		if p.OnTranscript != nil {
 			p.OnTranscript(transcript)
 		}
+		// Drop new input while agent is already speaking to avoid queue buildup
+		if atomic.LoadInt32(&IsSpeaking) == 1 {
+			log.Printf("[pipeline] skipping transcript while speaking: %q", transcript)
+			continue
+		}
+		atomic.StoreInt32(&IsSpeaking, 1)
 		p.respond(transcript)
+		atomic.StoreInt32(&IsSpeaking, 0)
 	}
 }
 
