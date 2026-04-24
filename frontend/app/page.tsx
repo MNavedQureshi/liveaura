@@ -36,6 +36,13 @@ export default function HomePage() {
         </div>
         <div className="flex items-center gap-3">
           <a
+            href="/meet"
+            className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white text-sm font-medium rounded-xl hover:bg-white/10 transition-colors"
+          >
+            <Video className="w-4 h-4" />
+            Meet
+          </a>
+          <a
             href="/console"
             className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white text-sm font-medium rounded-xl hover:bg-white/10 transition-colors"
           >
@@ -67,13 +74,22 @@ export default function HomePage() {
           Launch an AI voice agent that calls people via web link, phone number, or WhatsApp.
           Give it any prompt — sales pitch, presentation, support script — and let it talk.
         </p>
-        <button
-          onClick={() => setShowLauncher(true)}
-          className="inline-flex items-center gap-3 px-8 py-4 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-2xl transition-colors text-lg"
-        >
-          <Mic className="w-5 h-5" />
-          Launch Your AI Agent
-        </button>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <button
+            onClick={() => setShowLauncher(true)}
+            className="inline-flex items-center gap-3 px-8 py-4 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-2xl transition-colors text-lg"
+          >
+            <Mic className="w-5 h-5" />
+            Launch Your AI Agent
+          </button>
+          <a
+            href="/meet"
+            className="inline-flex items-center gap-3 px-8 py-4 glass glass-hover text-white font-semibold rounded-2xl transition-colors text-lg"
+          >
+            <Video className="w-5 h-5" />
+            Start a meeting
+          </a>
+        </div>
       </div>
 
       {/* Features */}
