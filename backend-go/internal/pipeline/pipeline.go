@@ -9,17 +9,24 @@ import (
 	"time"
 )
 
-// EndpointDebounce is the silence window we wait after a final transcript
-// before firing the LLM. Tune this:
+// EndpointDebounce is the fallback silence window we wait after a final
+// transcript before firing the LLM if the semantic turn detector hasn't already
+// fired. Reduced from 600ms now that NAMO handles most turn completions
+// semantically before the timer would expire.
+//
 //   - lower  → snappier but more mid-sentence interruptions
 //   - higher → more natural but slower perceived latency
-// Deepgram's own utterance_end_ms minimum is 1000ms, so we run our own timer.
-const EndpointDebounce = 600 * time.Millisecond
+const EndpointDebounce = 150 * time.Millisecond
+
+// SemanticFireThreshold is the minimum NAMO confidence required to fire the
+// LLM immediately on a semantic "turn complete" signal, bypassing the debounce.
+// Raise this (e.g. 0.80) to be more conservative; lower (e.g. 0.55) for speed.
+const SemanticFireThreshold = 0.65
 
 // MetricEvent is a timed pipeline event published to the frontend
 // via LiveKit data channel so the UI can show a live conversation panel.
 type MetricEvent struct {
-	Type        string `json:"type"`        // speech_started, user_interim, user_final, user_done, llm_start, llm_first_token, llm_done, tts_start, tts_first_frame, audio_playing, barge_in
+	Type        string `json:"type"`        // speech_started, user_interim, user_final, user_done, semantic_turn_end, llm_start, llm_first_token, llm_done, tts_start, tts_first_frame, audio_playing, barge_in
 	TurnID      int64  `json:"turn_id"`
 	Text        string `json:"text,omitempty"`
 	DelayMs     int64  `json:"delay_ms,omitempty"` // ms since this turn started
@@ -209,7 +216,29 @@ func (p *Pipeline) handleFinal(text string) {
 
 	p.emit("user_final", text, delay)
 
-	// Debounce: wait EndpointDebounce for more speech; if silent, fire LLM
+	// ── Semantic turn detection ──────────────────────────────────────────────
+	// Ask the NAMO sidecar whether the accumulated ASR text is a complete turn.
+	// This call is synchronous but bounded to 100ms (turnDetectorHTTPTimeout).
+	// NAMO inference is <20ms; Docker bridge adds ~1ms. In practice <25ms total.
+	//
+	// If confident the turn is done → fire LLM immediately (skip the timer).
+	// On sidecar failure (down/timeout) → fall through to the debounce timer.
+	complete, conf, err := semanticTurnCheck(accumulated)
+	if err != nil {
+		log.Printf("[turn-%d] turn-detector unavailable, using debounce: %v", turnID, err)
+	} else if complete && conf >= SemanticFireThreshold {
+		log.Printf("[turn-%d] semantic fire (conf=%.2f): %q", turnID, conf, accumulated)
+		p.cancelEndpointTimer()
+		p.emit("semantic_turn_end", accumulated, delay)
+		go p.fireResponse(accumulated)
+		return
+	}
+
+	// ── Silence-based fallback ───────────────────────────────────────────────
+	// Either the sidecar said "not done yet" or it was unavailable.
+	// Reset/start the debounce timer. Duration is now 150ms (was 600ms) because
+	// the semantic model catches most "clearly done" turns above, so we only
+	// need a short window for mid-sentence pauses.
 	p.timerMu.Lock()
 	if p.endpointTimer != nil {
 		p.endpointTimer.Stop()

@@ -115,11 +115,35 @@ services:
     restart: unless-stopped
     depends_on:
       - livekit
+      - turn-detector
     env_file: .env
     environment:
       - AGENT_PORT=8001
+      - TURN_DETECTOR_URL=http://turn-detector:8080
     networks:
       - app
+
+  # ── NAMO Turn Detector sidecar ───────────────────────────────────
+  # Semantic end-of-turn model (VideoSDK NAMO v1, DistilBERT ONNX).
+  # The Go agent calls POST http://turn-detector:8080/predict with the
+  # latest ASR transcript. If turn_complete=true the LLM fires immediately
+  # instead of waiting for the 150ms silence debounce.
+  #
+  # Build time: ~3-4 min (downloads model_en.onnx ~135MB once, baked in image).
+  # Runtime:    <20ms inference on CPU, ~30MB RAM.
+  turn-detector:
+    build:
+      context: ./turn-detector
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ── Next.js Frontend ─────────────────────────────────────────────
   frontend:
