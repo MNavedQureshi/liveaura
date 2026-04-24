@@ -10,7 +10,6 @@ import {
   VideoConference,
   useTracks,
 } from "@livekit/components-react";
-
 import { Track } from "livekit-client";
 
 interface Props {
@@ -39,22 +38,30 @@ export default function CallRoom({
   serverUrl,
   roomName,
   videoEnabled,
-  agentName,
   onDisconnect,
 }: Props) {
   return (
-    <div className="h-full flex flex-col">
-      <div className="px-6 py-3 border-b border-white/10 flex items-center justify-between bg-black/30">
-        <div className="flex items-center gap-3">
-          <div className="relative w-2.5 h-2.5">
-            <span className="absolute inset-0 rounded-full bg-green-500 call-pulse" />
-            <span className="relative block w-2.5 h-2.5 rounded-full bg-green-400" />
-          </div>
-          <span className="text-sm font-medium text-white">Live — {agentName}</span>
-        </div>
-        <span className="text-xs text-slate-500 font-mono">{roomName}</span>
-      </div>
-
+    /*
+     * Outer div fills the space given by the room page.
+     * CSS variables here override LiveKit's default dark theme so the
+     * control bar and participant tiles blend with the console palette.
+     */
+    <div
+      className="h-full flex flex-col"
+      style={
+        {
+          "--lk-theme-color":       "63, 58, 140",   /* indigo RGB */
+          "--lk-bg":                "#F7F3EA",
+          "--lk-bg2":               "#FDFBF5",
+          "--lk-bg3":               "#EFE9DA",
+          "--lk-border":            "#E4DBC5",
+          "--lk-fg":                "#2A231A",
+          "--lk-fg2":               "#554937",
+          "--lk-control-bar-bg":    "#FDFBF5",
+          "--lk-control-bar-height":"60px",
+        } as React.CSSProperties
+      }
+    >
       <LiveKitRoom
         video={videoEnabled}
         audio={true}
@@ -68,7 +75,13 @@ export default function CallRoom({
           {videoEnabled ? <VideoConference /> : <AudioConference />}
         </div>
         <RoomAudioRenderer />
-        <ControlBar className="border-t border-white/10" />
+        {/* Control bar sits at the bottom of the call area */}
+        <ControlBar
+          style={{
+            borderTop: "1px solid #E4DBC5",
+            background: "#FDFBF5",
+          }}
+        />
       </LiveKitRoom>
     </div>
   );
