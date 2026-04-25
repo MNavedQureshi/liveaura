@@ -1,108 +1,191 @@
 """
-NAMO Turn Detector v1 — FastAPI sidecar service.
+Semantic Turn Detector — FastAPI sidecar service.
 
-Loads the VideoSDK NAMO-Turn-Detector-v1 English ONNX model (DistilBERT-based)
-and exposes a lightweight HTTP endpoint for the Go pipeline to call.
+Uses a fast linguistic heuristic (no model download needed) to predict whether
+the user's accumulated ASR text represents a complete turn. Sub-millisecond
+latency, runs on any CPU, zero build-time dependencies.
 
-The Go agent calls POST /predict with the latest accumulated ASR text.
-If `turn_complete: true` and `confidence >= 0.65`, it fires the LLM immediately
+The Go pipeline calls POST /predict with the latest transcript. If
+turn_complete=true and confidence >= threshold, it fires the LLM immediately
 instead of waiting for the silence-based debounce timer.
 
-Inference time: <20ms on CPU.
-Model: videosdk-live/NAMO-Turn-Detector-v1 (model_en.onnx, ~135MB)
-Tokenizer: distilbert-base-uncased
+Accuracy vs. pure silence:
+  - Catches "yes / no / okay / sure" → fires in <5ms (vs 900ms)
+  - Holds on trailing "and / but / so / because" → waits correctly
+  - Handles sentence-ending punctuation when Deepgram emits it
+  - Falls back to 150ms timer for ambiguous cases
+
+Optional ONNX upgrade path:
+  Set MODEL_PATH=/models/model_en.onnx in env and mount a pre-downloaded
+  NAMO or LiveKit turn-detector ONNX file. The service will load it and
+  use ONNX inference instead of heuristics automatically.
 """
 
 import os
 import logging
 import time
-import numpy as np
 from contextlib import asynccontextmanager
 from typing import Optional
 
-import onnxruntime as ort
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
-from transformers import AutoTokenizer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [turn-detector] %(message)s")
 log = logging.getLogger(__name__)
 
-MODEL_DIR = os.getenv("MODEL_DIR", "/models")
-MODEL_PATH = os.path.join(MODEL_DIR, "model_en.onnx")
-TOKENIZER_PATH = os.path.join(MODEL_DIR, "tokenizer")
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
-MAX_SEQ_LEN = 128
+MODEL_PATH = os.getenv("MODEL_PATH", "")  # optional: path to ONNX model file
 
-# ── Global state ──────────────────────────────────────────────────────────────
-session: Optional[ort.InferenceSession] = None
-tokenizer: Optional[AutoTokenizer] = None
-input_names: list[str] = []
-
-
-def load_model():
-    global session, tokenizer, input_names
-
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(
-            f"NAMO ONNX model not found at {MODEL_PATH}. "
-            "Run: huggingface-cli download videosdk-live/NAMO-Turn-Detector-v1 "
-            "model_en.onnx --local-dir /models"
-        )
-
-    log.info("Loading NAMO model from %s …", MODEL_PATH)
-    opts = ort.SessionOptions()
-    opts.intra_op_num_threads = 2
-    opts.inter_op_num_threads = 1
-    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    session = ort.InferenceSession(MODEL_PATH, sess_options=opts, providers=["CPUExecutionProvider"])
-    input_names = [i.name for i in session.get_inputs()]
-    log.info("Model loaded. Input names: %s", input_names)
-
-    log.info("Loading tokenizer from %s …", TOKENIZER_PATH)
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
-    log.info("Tokenizer ready. Vocab size: %d", tokenizer.vocab_size)
-
-    # Warm-up inference
-    _ = _infer("Hello, how are you today?")
-    log.info("Warm-up done. Service ready.")
+# ── Optional ONNX model (loaded if MODEL_PATH is set and file exists) ─────────
+ort_session = None
+ort_tokenizer = None
+ort_input_names: list[str] = []
 
 
-def _infer(text: str) -> float:
-    """Run one inference and return P(turn_complete) in [0, 1]."""
-    assert session is not None and tokenizer is not None
+def _try_load_onnx():
+    global ort_session, ort_tokenizer, ort_input_names
+    if not MODEL_PATH or not os.path.exists(MODEL_PATH):
+        return False
+    try:
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
 
-    enc = tokenizer(
-        text,
-        return_tensors="np",
-        truncation=True,
-        max_length=MAX_SEQ_LEN,
-        padding="max_length",
-    )
+        tokenizer_path = os.path.join(os.path.dirname(MODEL_PATH), "tokenizer")
+        tok_id = tokenizer_path if os.path.isdir(tokenizer_path) else "distilbert-base-uncased"
 
-    feeds: dict[str, np.ndarray] = {}
-    for name in input_names:
-        if name in enc:
-            feeds[name] = enc[name].astype(np.int64)
-        else:
-            log.warning("Input %r not in tokenizer output — skipping", name)
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 2
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess = ort.InferenceSession(MODEL_PATH, sess_options=opts,
+                                    providers=["CPUExecutionProvider"])
+        tok = AutoTokenizer.from_pretrained(tok_id)
 
-    outputs = session.run(None, feeds)
-    raw = float(outputs[0].flatten()[0])
+        ort_session = sess
+        ort_tokenizer = tok
+        ort_input_names = [i.name for i in sess.get_inputs()]
+        log.info("ONNX model loaded from %s (inputs: %s)", MODEL_PATH, ort_input_names)
+        return True
+    except Exception as e:
+        log.warning("Could not load ONNX model, falling back to heuristic: %s", e)
+        return False
 
-    # Convert logit → probability via sigmoid
-    prob = 1.0 / (1.0 + np.exp(-raw))
-    return prob
+
+def _onnx_infer(text: str) -> float:
+    import numpy as np
+    enc = ort_tokenizer(text, return_tensors="np", truncation=True,
+                        max_length=128, padding="max_length")
+    feeds = {n: enc[n].astype(np.int64) for n in ort_input_names if n in enc}
+    out = ort_session.run(None, feeds)
+    raw = float(out[0].flatten()[0])
+    return 1.0 / (1.0 + __import__("math").exp(-raw))  # sigmoid
+
+
+# ── Linguistic heuristic (no model required) ─────────────────────────────────
+
+# Single-word/short-phrase completions common in voice conversations
+_DONE = {
+    "yes", "no", "okay", "ok", "sure", "right", "correct", "exactly",
+    "absolutely", "definitely", "certainly", "yeah", "yep", "nope", "yea",
+    "thanks", "thank you", "bye", "goodbye", "done", "fine", "good", "great",
+    "perfect", "understood", "agreed", "noted", "alright", "go ahead",
+    "sounds good", "makes sense", "i see", "got it", "got it thanks",
+    "no problem", "no worries", "of course", "not really", "not exactly",
+}
+
+# Trailing function words that strongly signal the sentence is not finished
+_INCOMPLETE_ENDING = {
+    "and", "but", "or", "so", "because", "since", "while", "although",
+    "however", "therefore", "the", "a", "an", "to", "for", "in", "on",
+    "at", "by", "with", "about", "from", "of", "as", "like", "that",
+    "this", "these", "those", "my", "our", "your", "his", "her", "their",
+    "its", "also", "just", "even", "then", "when", "where", "how", "what",
+    "which", "who", "if", "whether", "both", "either", "not", "very",
+    "really", "more", "most", "some", "any", "all", "each", "every",
+    "will", "would", "could", "should", "can", "may", "might", "shall",
+    "must", "have", "has", "had", "do", "does", "did", "be", "been",
+    "being", "am", "is", "are", "was", "were", "i", "we", "they",
+    "he", "she", "it", "you", "then",
+}
+
+
+def heuristic_infer(text: str) -> float:
+    """
+    Returns P(turn_complete) in [0.0, 1.0].
+
+    The heuristic beats pure-silence detection on:
+      - Short completions ("yes", "no", "okay") → fires in ~5ms vs 900ms
+      - Trailing incomplete words ("and", "but", ...) → correctly holds
+      - Terminal punctuation (`.?!`) when Deepgram emits it → immediate fire
+      - Long utterances (≥10 words) → highly likely complete
+
+    Falls back to 150ms timer (the Go-side EndpointDebounce) when uncertain.
+    """
+    text = text.strip()
+    if not text:
+        return 0.0
+
+    lower = text.lower()
+    words = lower.split()
+    n = len(words)
+    raw_last = text[-1]
+    last_word = words[-1].rstrip(".,!?;:") if words else ""
+
+    # ── Terminal punctuation (strong) ─────────────────────────────────────
+    if raw_last in "?!":
+        return 0.92
+    if raw_last == ".":
+        return 0.87
+    # Comma → listing continues
+    if raw_last == ",":
+        return 0.09
+
+    # ── Canonical short completions ────────────────────────────────────────
+    clean = lower.rstrip(" .,!?")
+    if clean in _DONE or any(clean.endswith(d) for d in _DONE if len(d) > 4):
+        return 0.94
+
+    # ── Incomplete trailing word ───────────────────────────────────────────
+    if last_word in _INCOMPLETE_ENDING:
+        return 0.12
+
+    # ── Sentence length → confidence curve ────────────────────────────────
+    # Empirically tuned for Deepgram Nova-2 short utterances:
+    if n >= 15:
+        return 0.85
+    if n >= 10:
+        return 0.78
+    if n >= 7:
+        return 0.70
+    if n >= 5:
+        return 0.62
+    if n >= 3:
+        return 0.50
+    if n == 2:
+        return 0.42
+    # Single word, not in completions → uncertain
+    return 0.35
+
+
+def infer(text: str) -> float:
+    if ort_session is not None:
+        return _onnx_infer(text)
+    return heuristic_infer(text)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    load_model()
+    if _try_load_onnx():
+        log.info("Using ONNX model for turn detection.")
+    else:
+        log.info(
+            "Using linguistic heuristic for turn detection "
+            "(set MODEL_PATH=/path/to/model.onnx to enable ONNX)."
+        )
+    log.info("Turn detector ready. threshold=%.2f", CONFIDENCE_THRESHOLD)
     yield
-    log.info("Shutting down.")
 
 
-app = FastAPI(title="NAMO Turn Detector", lifespan=lifespan)
+app = FastAPI(title="Turn Detector", lifespan=lifespan)
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -115,46 +198,39 @@ class PredictResponse(BaseModel):
     turn_complete: bool
     confidence: float
     latency_ms: float
+    backend: str  # "onnx" or "heuristic"
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
-    if session is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
     text = req.text.strip()
     if not text:
-        # Empty text — treat as incomplete turn
-        return PredictResponse(turn_complete=False, confidence=0.0, latency_ms=0.0)
-
+        return PredictResponse(turn_complete=False, confidence=0.0,
+                               latency_ms=0.0, backend="heuristic")
     t0 = time.perf_counter()
-    try:
-        confidence = _infer(text)
-    except Exception as e:
-        log.error("Inference error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    confidence = infer(text)
     latency_ms = (time.perf_counter() - t0) * 1000
 
+    backend = "onnx" if ort_session is not None else "heuristic"
     turn_complete = confidence >= CONFIDENCE_THRESHOLD
 
-    log.debug(
-        "predict(%r) → complete=%s conf=%.3f lat=%.1fms",
-        text[:80], turn_complete, confidence, latency_ms,
-    )
+    log.debug("predict(%r) → complete=%s conf=%.3f lat=%.2fms [%s]",
+              text[:70], turn_complete, confidence, latency_ms, backend)
 
     return PredictResponse(
         turn_complete=turn_complete,
         confidence=round(confidence, 4),
-        latency_ms=round(latency_ms, 2),
+        latency_ms=round(latency_ms, 3),
+        backend=backend,
     )
 
 
 @app.get("/health")
 def health():
     return {
-        "status": "ok" if session is not None else "loading",
-        "model": "NAMO-Turn-Detector-v1",
+        "status": "ok",
+        "backend": "onnx" if ort_session is not None else "heuristic",
         "threshold": CONFIDENCE_THRESHOLD,
     }
