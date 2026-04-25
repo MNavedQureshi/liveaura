@@ -39,6 +39,12 @@ type Pipeline struct {
 	llm LLM
 	tts *DeepgramTTS
 
+	// bargeDetector is a fast, local "user is talking" trigger that runs in
+	// parallel with Deepgram's SpeechStarted event. It cancels TTS within
+	// ~60ms of speech onset (vs. Deepgram's typical 150-300ms VAD latency).
+	// Optional — set to nil to disable.
+	bargeDetector *BargeDetector
+
 	// speakCtx is cancelled when the user interrupts (barge-in).
 	// A fresh ctx is created for every AI response turn.
 	speakCtx    context.Context
@@ -87,11 +93,24 @@ func New(systemPrompt, sourceLang, targetLang string) (*Pipeline, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pipeline{
+	p := &Pipeline{
 		stt: stt,
 		llm: NewLLM(buildSystemPrompt(systemPrompt, sourceLang, targetLang)),
 		tts: tts,
-	}, nil
+	}
+	// Wire local-VAD fast barge-in. The detector borrows isSpeaking and
+	// cancels TTS the moment it sees sustained voice — much faster than
+	// waiting for Deepgram's SpeechStarted to round-trip.
+	bd, err := NewBargeDetector(&p.isSpeaking, func() {
+		p.emitSimple("barge_in")
+		p.cancelSpeak()
+	})
+	if err != nil {
+		log.Printf("[pipeline] barge detector init failed (continuing without): %v", err)
+	} else {
+		p.bargeDetector = bd
+	}
+	return p, nil
 }
 
 // buildSystemPrompt appends translation instructions when source and target differ.
@@ -118,7 +137,15 @@ func buildSystemPrompt(base, sourceLang, targetLang string) string {
 }
 
 // SendAudio accepts a raw Opus payload from a LiveKit RTP packet.
+// Routes the same payload to (a) Deepgram STT for transcription/turn detection
+// and (b) the local BargeDetector for fast TTS interruption.
+//
+// Both run in this same goroutine so the local VAD runs before Deepgram even
+// sees the bytes — keeps the detector's decoder safe (single-caller).
 func (p *Pipeline) SendAudio(opusPayload []byte) {
+	if p.bargeDetector != nil {
+		p.bargeDetector.Feed(opusPayload)
+	}
 	_ = p.stt.SendAudio(opusPayload)
 }
 
