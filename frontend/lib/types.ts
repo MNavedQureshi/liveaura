@@ -1,5 +1,9 @@
 export type CallType = "web" | "phone" | "whatsapp";
 
+// "pipeline"    → Deepgram STT + LLM (Anthropic/Cerebras/Gemini/Groq) + Aura TTS
+// "gemini_live" → single WebSocket to Gemini Live API (native voice in/out)
+export type VoiceMode = "pipeline" | "gemini_live";
+
 export interface CreateCallRequest {
   call_type: CallType;
   agent_name: string;
@@ -11,6 +15,7 @@ export interface CreateCallRequest {
   video_enabled: boolean;
   source_lang?: string;
   target_lang?: string;
+  voice_mode?: VoiceMode;
 }
 
 export interface CallRecord {

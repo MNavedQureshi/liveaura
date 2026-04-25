@@ -85,10 +85,13 @@ func runSession(roomName string) {
 		return
 	}
 
+	// audioSink is the per-call function that consumes incoming Opus payloads
+	// from the user's audio track. It's set after we know which voice backend
+	// (pipeline or gemini_live) to use, based on room metadata.
 	var (
-		pipe   *pipeline.Pipeline
-		pipeMu sync.Mutex
-		done   = make(chan struct{})
+		audioSink func([]byte)
+		sinkMu    sync.Mutex
+		done      = make(chan struct{})
 	)
 
 	room, err := lksdk.ConnectToRoomWithToken(
@@ -111,11 +114,11 @@ func runSession(roomName string) {
 							if err != nil {
 								return
 							}
-							pipeMu.Lock()
-							p := pipe
-							pipeMu.Unlock()
-							if p != nil {
-								p.SendAudio(pkt.Payload)
+							sinkMu.Lock()
+							sink := audioSink
+							sinkMu.Unlock()
+							if sink != nil {
+								sink(pkt.Payload)
 							}
 						}
 					}()
@@ -143,7 +146,7 @@ func runSession(roomName string) {
 
 	// Read system prompt, language, and video settings from room metadata
 	systemPrompt := defaultPrompt
-	var sourceLang, targetLang string
+	var sourceLang, targetLang, voiceMode string
 	var videoEnabled bool
 	if meta := room.Metadata(); meta != "" {
 		var m map[string]any
@@ -163,7 +166,94 @@ func runSession(roomName string) {
 			if ve, ok := m["video_enabled"].(bool); ok {
 				videoEnabled = ve
 			}
+			// "pipeline" (default — Deepgram STT + LLM + Aura TTS) or "gemini_live"
+			// (single WebSocket: native voice in/voice out via Gemini Live API).
+			if vm, ok := m["voice_mode"].(string); ok {
+				voiceMode = vm
+			}
 		}
+	}
+
+	// Read greeting once from metadata so both code paths can use it.
+	greeting := "Hello! I'm your AI assistant. How can I help you today?"
+	if meta := room.Metadata(); meta != "" {
+		var m map[string]any
+		if json.Unmarshal([]byte(meta), &m) == nil {
+			if g, ok := m["greeting"].(string); ok && g != "" {
+				greeting = g
+			}
+		}
+	}
+
+	// ── Gemini Live mode ──────────────────────────────────────────────────────
+	// Replaces STT + LLM + TTS with one WebSocket. Same OnOpusFrames / OnEvent
+	// callback shape as Pipeline so the LiveKit publish + metric panel still work.
+	if voiceMode == "gemini_live" {
+		log.Printf("[agent] voice_mode=gemini_live")
+		gem, err := pipeline.NewGeminiLive(systemPrompt)
+		if err != nil {
+			log.Printf("[agent] gemini live error: %v", err)
+			return
+		}
+		gem.OnOpusFrames = func(ctx context.Context, frameC <-chan []byte) {
+			ticker := time.NewTicker(20 * time.Millisecond)
+			defer ticker.Stop()
+			drain := func() {
+				go func() {
+					for range frameC {
+					}
+				}()
+			}
+			for frame := range frameC {
+				select {
+				case <-ctx.Done():
+					drain()
+					return
+				case <-ticker.C:
+				}
+				if err := audioTrack.WriteSample(webrtcmedia.Sample{
+					Data:     frame,
+					Duration: 20 * time.Millisecond,
+				}, nil); err != nil {
+					log.Printf("[agent] write sample error: %v", err)
+					drain()
+					return
+				}
+			}
+		}
+		gem.OnEvent = func(evt pipeline.MetricEvent) {
+			data, err := json.Marshal(evt)
+			if err != nil {
+				return
+			}
+			_ = room.LocalParticipant.PublishData(
+				data,
+				lksdk.WithDataPublishReliable(true),
+				lksdk.WithDataPublishTopic("metrics"),
+			)
+		}
+		sinkMu.Lock()
+		audioSink = gem.SendAudio
+		sinkMu.Unlock()
+
+		go gem.Run()
+
+		// Trigger model to speak first by sending a user-prompt that asks for
+		// the greeting. (Live API doesn't auto-greet without an initial turn.)
+		if greeting != "" {
+			if err := gem.SendInitialPrompt("Greet the caller naturally with this exact opening: " + greeting); err != nil {
+				log.Printf("[agent] gemini live initial prompt: %v", err)
+			}
+		}
+
+		// End when either the LiveKit room disconnects or the Gemini WS closes.
+		select {
+		case <-done:
+		case <-gem.Wait():
+			log.Printf("[agent] gemini live session ended; closing room")
+		}
+		gem.Close()
+		return
 	}
 
 	// Start D-ID avatar stream when video is enabled and DID_API_KEY is set
@@ -208,9 +298,10 @@ func runSession(roomName string) {
 		log.Printf("[agent] pipeline error: %v", err)
 		return
 	}
-	pipeMu.Lock()
-	pipe = p
-	pipeMu.Unlock()
+	sinkMu.Lock()
+	audioSink = p.SendAudio
+	sinkMu.Unlock()
+	pipe := p
 
 	didVoiceID := os.Getenv("DID_VOICE_ID") // e.g. "en-US-JennyNeural"
 
@@ -275,16 +366,7 @@ func runSession(roomName string) {
 		}
 	}
 
-	// Deliver opening greeting
-	greeting := "Hello! I'm your AI assistant. How can I help you today?"
-	if meta := room.Metadata(); meta != "" {
-		var m map[string]any
-		if json.Unmarshal([]byte(meta), &m) == nil {
-			if g, ok := m["greeting"].(string); ok && g != "" {
-				greeting = g
-			}
-		}
-	}
+	// Deliver opening greeting (greeting is already loaded from metadata above)
 	pipe.SpeakText(greeting)
 
 	// Run the voice loop until the room disconnects

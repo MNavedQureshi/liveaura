@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Phone, Video, MessageCircle, Globe, Mic, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
-import type { CallRecord, CallType, CreateCallRequest } from "@/lib/types";
+import { Phone, Video, MessageCircle, Globe, Mic, ChevronDown, ChevronUp, Loader2, X, Zap } from "lucide-react";
+import type { CallRecord, CallType, CreateCallRequest, VoiceMode } from "@/lib/types";
 import { createCall } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
@@ -38,6 +38,7 @@ export default function CallLauncher({ onCallCreated, onClose }: Props) {
   const [videoEnabled, setVideoEnabled] = useState(false);
   const [sourceLang, setSourceLang] = useState("en");
   const [targetLang, setTargetLang] = useState("en");
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>("pipeline");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -61,6 +62,7 @@ export default function CallLauncher({ onCallCreated, onClose }: Props) {
       video_enabled: videoEnabled,
       source_lang: sourceLang,
       target_lang: targetLang,
+      voice_mode: voiceMode,
     };
 
     try {
@@ -204,6 +206,47 @@ export default function CallLauncher({ onCallCreated, onClose }: Props) {
                 className="mt-3 w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
               />
             )}
+          </div>
+
+          {/* Voice backend */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Voice Engine</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setVoiceMode("pipeline")}
+                className={`flex flex-col items-start gap-1 p-4 rounded-xl border transition-all text-left ${
+                  voiceMode === "pipeline"
+                    ? "bg-brand-600/20 border-brand-500 text-brand-500"
+                    : "glass-hover glass border-white/10 text-slate-400"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Mic className="w-4 h-4" />
+                  <span className="font-medium text-sm">Standard Pipeline</span>
+                </div>
+                <span className="text-xs opacity-70 leading-tight">
+                  Deepgram STT → LLM → Aura TTS. Stable, swap any LLM provider.
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setVoiceMode("gemini_live")}
+                className={`flex flex-col items-start gap-1 p-4 rounded-xl border transition-all text-left ${
+                  voiceMode === "gemini_live"
+                    ? "bg-brand-600/20 border-brand-500 text-brand-500"
+                    : "glass-hover glass border-white/10 text-slate-400"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4" />
+                  <span className="font-medium text-sm">Gemini Live (beta)</span>
+                </div>
+                <span className="text-xs opacity-70 leading-tight">
+                  Single WebSocket: native voice in/out. Lower latency, ~10 min/session.
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Video toggle */}

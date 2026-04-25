@@ -35,6 +35,11 @@ type CreateCallRequest struct {
 	VideoEnabled       bool   `json:"video_enabled"`
 	SourceLang         string `json:"source_lang"` // user's spoken language (e.g. "es")
 	TargetLang         string `json:"target_lang"` // agent's response language (e.g. "en")
+	// VoiceMode picks the voice backend. Allowed values:
+	//   ""             → default ("pipeline")
+	//   "pipeline"     → Deepgram STT + LLM (Anthropic/Cerebras/Gemini/Groq) + Aura TTS
+	//   "gemini_live"  → single WebSocket to Gemini Live API (native voice in/out)
+	VoiceMode string `json:"voice_mode"`
 }
 
 var (
@@ -81,6 +86,7 @@ func createCall(c *gin.Context) {
 		"greeting":      req.Greeting,
 		"source_lang":   req.SourceLang,
 		"target_lang":   req.TargetLang,
+		"voice_mode":    req.VoiceMode, // "" → pipeline; "gemini_live" → Live API
 	}
 	if req.PresentationScript != "" {
 		meta["presentation_script"] = req.PresentationScript
