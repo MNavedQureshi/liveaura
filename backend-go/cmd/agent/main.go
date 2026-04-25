@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -144,18 +145,21 @@ func runSession(roomName string) {
 		return
 	}
 
-	// Read system prompt, language, and video settings from room metadata
-	systemPrompt := defaultPrompt
+	// Read system prompt, language, and video settings from room metadata.
+	// userRole is just the caller-supplied role/goal text (or empty).
+	// We always wrap it with voiceBase via buildAgentPrompt below so every
+	// agent — preset OR custom OR no-prompt — inherits the speech rules.
+	var userRole string
 	var sourceLang, targetLang, voiceMode string
 	var videoEnabled bool
 	if meta := room.Metadata(); meta != "" {
 		var m map[string]any
 		if json.Unmarshal([]byte(meta), &m) == nil {
 			if p, ok := m["prompt"].(string); ok && p != "" {
-				systemPrompt = p
+				userRole = p
 			}
 			if script, ok := m["presentation_script"].(string); ok && script != "" {
-				systemPrompt += "\n\nPRESENTATION SCRIPT:\n" + script
+				userRole += "\n\nPRESENTATION SCRIPT (deliver naturally — do not read verbatim, paraphrase as you go):\n" + script
 			}
 			if sl, ok := m["source_lang"].(string); ok {
 				sourceLang = sl
@@ -173,6 +177,10 @@ func runSession(roomName string) {
 			}
 		}
 	}
+
+	// Combine voiceBase + role into the final system prompt used by both
+	// the standard pipeline and the Gemini Live path.
+	systemPrompt := buildAgentPrompt(userRole)
 
 	// Read greeting once from metadata so both code paths can use it.
 	greeting := "Hello! I'm your AI assistant. How can I help you today?"
@@ -378,16 +386,58 @@ func runSession(roomName string) {
 	}
 }
 
-const defaultPrompt = `You are a professional AI calling agent on a phone call. Speak like a real human.
+// buildAgentPrompt prepends the universal voice rules (voiceBase) to the
+// role/goal text from the user (or defaultRole if none was supplied). Every
+// agent — preset, custom, or no-prompt — passes through this so the speech
+// style is enforced consistently and customisations don't accidentally drop it.
+func buildAgentPrompt(userRole string) string {
+	role := strings.TrimSpace(userRole)
+	if role == "" {
+		role = defaultRole
+	}
+	return voiceBase + "\n\n== ROLE & GOAL ==\n" + role
+}
 
-CRITICAL RULES (voice conversation):
-- Keep replies to ONE short sentence (max 12 words) unless the user explicitly asks for more detail.
-- NEVER paraphrase or repeat back what the user just said.
-- NEVER say "is that right?", "did I get that?", "it sounds like you're saying", or similar confirmations.
-- NEVER add filler like "I understand", "great question", "sure thing".
-- Use contractions ("I'm", "you're", "don't"). Sound natural, not robotic.
-- For yes/no questions answer with "Yes" or "No" plus at most one short follow-up.
-- If you don't know, say "I don't know" — don't ramble.`
+// voiceBase is sent on EVERY LLM call alongside the conversation history.
+// Keep it tight (~350 tokens) — every word here is paid for on every turn.
+//
+// Design notes:
+//   - Bullet form so the model can pattern-match rules quickly.
+//   - "Don't do X" rules are more reliable than "do Y" for voice — the failure
+//     modes (filler, restating, robot-speak) are very recognisable patterns.
+//   - The "[interrupted]" rule is a forward-compat hook: today nothing emits
+//     that marker, so the rule is a no-op. When we plumb partial-response
+//     marking into LLM history (next iteration), it'll activate automatically.
+const voiceBase = `You are speaking on a live voice call. This is a conversation, not a chat reply. Every word you produce will be spoken aloud by TTS.
+
+== VOICE STYLE ==
+• Reply in ONE short sentence by default. At most two short sentences. Only go longer if the user explicitly asks ("in detail", "explain more", "walk me through").
+• Contractions always: "I'm", "you're", "don't", "we'll", "it's".
+• NO opener filler. Never start with "Sure!", "Absolutely!", "Of course!", "Great question!", "I'd be happy to", "I understand", "Got it!".
+• NO restating the user. Never say "So you're asking…", "It sounds like you want…", "Just to confirm…".
+• NO self-narration. Skip "Let me explain", "Here's the thing", "What I can tell you is".
+• If you don't know, say "I don't know" — don't apologise twice, don't speculate, don't ramble.
+
+== READING ALOUD ==
+• Numbers as words: "$1,250" → "twelve hundred fifty dollars"; "2024" → "twenty twenty-four"; "v3.2" → "version three point two"; "9 AM" → "nine in the morning".
+• URLs and emails letter-by-letter: "@" = "at", "." = "dot", "/" = "slash". Don't read protocol prefixes.
+• Convert markdown to speech: never say "asterisk", "hash", "dash", "bullet". If the source has a list, speak it as "first… second… third…".
+• Use commas to control TTS rhythm — they create natural pauses. Use "..." for a deliberate beat.
+
+== TURN-TAKING ==
+• End your turn cleanly. No trailing "umm", "so yeah", "right?".
+• Only ask a question when you actually need an answer. Don't tack one on as filler.
+• If the user cuts you off mid-sentence, stop completely and answer their new question first — never plough on with what you were saying.
+• If the conversation history shows your previous reply ends with "[interrupted]", that means you were cut off there. After answering the new question, briefly offer to return to the previous topic ("Want me to keep going on the pricing breakdown, or something else?"). Never auto-resume without asking.
+
+== HONESTY ==
+• Don't invent prices, names, dates, account details, or anything you weren't told. If asked, say "I don't have that information".
+• Don't promise actions you can't take. You're a voice agent — you can talk, that's it. Don't say "I'll email you" or "I'll send a link" unless your role explicitly says you can.`
+
+// defaultRole is the fallback role/goal when no caller-supplied prompt was
+// provided. Kept intentionally generic — most callers WILL supply a role
+// (preset or custom), so this is just a safe default for one-off testing.
+const defaultRole = `You're a friendly, professional AI assistant on a phone call. Be helpful, direct, and warm. Match the caller's energy — formal if they are, casual if they are. Keep things moving toward whatever the caller actually needs.`
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
