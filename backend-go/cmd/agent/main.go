@@ -223,16 +223,25 @@ func runSession(roomName string) {
 		}
 	} else {
 		// Audio-only mode: Deepgram Aura TTS → Opus → LiveKit audio track.
-		// ctx is cancelled mid-loop when the user barges in.
-		pipe.OnOpusFrames = func(ctx context.Context, frames [][]byte) {
-			// Real-time pacing: 20ms per frame so LiveKit plays them at natural speed.
+		// frameC is fed in real time by the streaming TTS pipeline; we pace it
+		// out at 20ms per frame so LiveKit plays at natural speed.
+		// ctx is cancelled mid-loop when the user barges in — drain remaining
+		// frames in a background goroutine so the upstream synth worker doesn't block.
+		pipe.OnOpusFrames = func(ctx context.Context, frameC <-chan []byte) {
 			ticker := time.NewTicker(20 * time.Millisecond)
 			defer ticker.Stop()
-			for i, frame := range frames {
+			published := 0
+			drain := func() {
+				go func() {
+					for range frameC {
+					}
+				}()
+			}
+			for frame := range frameC {
 				select {
 				case <-ctx.Done():
-					log.Printf("[agent] frame publish cancelled (barge-in) after %d/%d frames",
-						i, len(frames))
+					log.Printf("[agent] frame publish cancelled (barge-in) after %d frames", published)
+					drain()
 					return
 				case <-ticker.C:
 				}
@@ -241,8 +250,10 @@ func runSession(roomName string) {
 					Duration: 20 * time.Millisecond,
 				}, nil); err != nil {
 					log.Printf("[agent] write sample error: %v", err)
+					drain()
 					return
 				}
+				published++
 			}
 		}
 	}
@@ -285,8 +296,16 @@ func runSession(roomName string) {
 	}
 }
 
-const defaultPrompt = `You are a professional AI calling agent. Be natural, friendly, and concise.
-Listen carefully and respond conversationally. Keep responses short unless asked to elaborate.`
+const defaultPrompt = `You are a professional AI calling agent on a phone call. Speak like a real human.
+
+CRITICAL RULES (voice conversation):
+- Keep replies to ONE short sentence (max 12 words) unless the user explicitly asks for more detail.
+- NEVER paraphrase or repeat back what the user just said.
+- NEVER say "is that right?", "did I get that?", "it sounds like you're saying", or similar confirmations.
+- NEVER add filler like "I understand", "great question", "sure thing".
+- Use contractions ("I'm", "you're", "don't"). Sound natural, not robotic.
+- For yes/no questions answer with "Yes" or "No" plus at most one short follow-up.
+- If you don't know, say "I don't know" — don't ramble.`
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

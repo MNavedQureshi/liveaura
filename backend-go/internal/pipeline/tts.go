@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -13,36 +14,27 @@ import (
 )
 
 const (
-	ttsRate     = 48000 // output sample rate (Hz)
-	ttsChannels = 1     // Mono
-	frameSize   = 960   // 20 ms frame at 48 kHz (960 samples)
+	ttsRate       = 48000             // output sample rate (Hz)
+	ttsChannels   = 1                 // mono
+	frameSize     = 960               // 20 ms frame at 48 kHz (samples)
+	pcmFrameBytes = frameSize * 2     // 1920 bytes per 20 ms frame (s16le)
 )
 
-// DeepgramTTS converts text to PCM via Deepgram Aura and encodes to Opus frames.
-// Uses the same DEEPGRAM_API_KEY already used for STT — no new credentials needed.
+// DeepgramTTS converts text to PCM via Deepgram Aura and streams Opus frames.
+// Each StreamOpusFrames call uses its own short-lived Opus encoder so the
+// pipeline can run multiple synth jobs concurrently without locking.
 type DeepgramTTS struct {
-	model   string // e.g. "aura-asteria-en"
-	encoder *opus.Encoder
+	model  string       // e.g. "aura-2-asteria-en"
+	client *http.Client // re-used across calls (keep-alive, TLS reuse)
 }
 
-// NewDeepgramTTS creates a TTS engine with a reusable Opus encoder.
-// targetLang is a BCP-47 code (e.g. "hi"); pass "" for English.
+// NewDeepgramTTS picks a voice based on TTS_VOICE env or target language.
 func NewDeepgramTTS(targetLang string) (*DeepgramTTS, error) {
-	enc, err := opus.NewEncoder(ttsRate, ttsChannels, opus.AppVoIP)
-	if err != nil {
-		return nil, fmt.Errorf("opus encoder: %w", err)
-	}
-	_ = enc.SetBitrate(24000)
-	_ = enc.SetComplexity(5)
-
-	// Pick voice model. Deepgram Aura 2 ships many voices; default to asteria (female).
-	// Override with TTS_VOICE env var if needed (e.g. "aura-orion-en" for male).
 	model := os.Getenv("TTS_VOICE")
 	if model == "" {
-		// Simple language → voice map
 		switch targetLang {
 		case "hi":
-			model = "aura-2-thalia-en" // closest; Deepgram Aura 2 Hindi is in beta
+			model = "aura-2-thalia-en" // closest neutral; Aura 2 Hindi in beta
 		case "es":
 			model = "aura-2-luna-en"
 		case "fr":
@@ -51,76 +43,114 @@ func NewDeepgramTTS(targetLang string) (*DeepgramTTS, error) {
 			model = "aura-2-asteria-en"
 		}
 	}
-
-	return &DeepgramTTS{model: model, encoder: enc}, nil
+	return &DeepgramTTS{
+		model:  model,
+		client: &http.Client{}, // default transport is fine; no timeout (ctx handles it)
+	}, nil
 }
 
-// SynthesizeOpus converts text → PCM via Deepgram Aura → Opus frames for LiveKit.
-func (t *DeepgramTTS) SynthesizeOpus(text string) ([][]byte, error) {
-	pcm, err := t.fetchPCM(text)
+// StreamOpusFrames synthesizes `text` via Deepgram Aura streaming PCM and
+// pushes 20 ms Opus frames to frameC as soon as enough PCM has arrived to
+// encode each one.
+//
+// Critical for low first-frame latency: instead of io.ReadAll'ing the full
+// response (which made tts_first_frame ~1.5–2.5 s for any non-trivial sentence),
+// we drain the body incrementally and emit each frame the moment it's ready.
+//
+// The caller is responsible for closing frameC AFTER this function returns.
+// Returns (nil) on EOF, ctx.Err() if cancelled, or a wrapped error otherwise.
+func (t *DeepgramTTS) StreamOpusFrames(
+	ctx context.Context,
+	text string,
+	frameC chan<- []byte,
+) error {
+	enc, err := opus.NewEncoder(ttsRate, ttsChannels, opus.AppVoIP)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("opus encoder: %w", err)
 	}
-	return t.encodeOpus(pcm)
-}
+	_ = enc.SetBitrate(24000)
+	_ = enc.SetComplexity(5)
 
-// fetchPCM calls Deepgram Aura TTS and returns raw PCM s16le samples at 48 kHz.
-// The response is raw linear16 bytes — identical layout to what Cartesia returned.
-func (t *DeepgramTTS) fetchPCM(text string) ([]int16, error) {
 	payload, _ := json.Marshal(map[string]string{"text": text})
-
 	url := fmt.Sprintf(
 		"https://api.deepgram.com/v1/speak?model=%s&encoding=linear16&sample_rate=%d&container=none",
 		t.model, ttsRate,
 	)
-
-	req, _ := http.NewRequest("POST", url, bytes.NewReader(payload))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Token "+os.Getenv("DEEPGRAM_API_KEY"))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("deepgram tts request: %w", err)
+		return fmt.Errorf("deepgram tts request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("deepgram tts %d: %s", resp.StatusCode, b)
+		return fmt.Errorf("deepgram tts %d: %s", resp.StatusCode, b)
 	}
 
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	// Streaming PCM → 20 ms Opus frames
+	pcmBuf := make([]byte, 0, pcmFrameBytes*4) // accumulate PCM here
+	readBuf := make([]byte, 8192)              // ~4 frames worth
+	opusBuf := make([]byte, 4000)              // max Opus frame size (RFC 6716)
 
-	// PCM s16le: 2 bytes per sample, little-endian
-	samples := make([]int16, len(raw)/2)
-	for i := range samples {
-		samples[i] = int16(binary.LittleEndian.Uint16(raw[i*2 : i*2+2]))
-	}
-	return samples, nil
-}
-
-// encodeOpus splits PCM into 20 ms frames and encodes each to Opus.
-func (t *DeepgramTTS) encodeOpus(pcm []int16) ([][]byte, error) {
-	var frames [][]byte
-	buf := make([]byte, 4000) // max Opus frame size
-
-	// Pad to a multiple of frameSize
-	for len(pcm)%frameSize != 0 {
-		pcm = append(pcm, 0)
-	}
-
-	for i := 0; i < len(pcm); i += frameSize {
-		chunk := pcm[i : i+frameSize]
-		n, err := t.encoder.Encode(chunk, buf)
-		if err != nil {
-			return nil, fmt.Errorf("opus encode: %w", err)
+	flushOne := func() error {
+		samples := bytesToInt16(pcmBuf[:pcmFrameBytes])
+		pcmBuf = pcmBuf[pcmFrameBytes:]
+		n, eErr := enc.Encode(samples, opusBuf)
+		if eErr != nil {
+			return fmt.Errorf("opus encode: %w", eErr)
 		}
 		frame := make([]byte, n)
-		copy(frame, buf[:n])
-		frames = append(frames, frame)
+		copy(frame, opusBuf[:n])
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case frameC <- frame:
+			return nil
+		}
 	}
-	return frames, nil
+
+	for {
+		n, rerr := resp.Body.Read(readBuf)
+		if n > 0 {
+			pcmBuf = append(pcmBuf, readBuf[:n]...)
+			for len(pcmBuf) >= pcmFrameBytes {
+				if err := flushOne(); err != nil {
+					return err
+				}
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			// ctx cancellation surfaces as "context canceled" here
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("deepgram tts read: %w", rerr)
+		}
+	}
+
+	// Flush trailing partial frame (pad with silence)
+	if len(pcmBuf) > 0 {
+		for len(pcmBuf) < pcmFrameBytes {
+			pcmBuf = append(pcmBuf, 0, 0)
+		}
+		if err := flushOne(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func bytesToInt16(b []byte) []int16 {
+	out := make([]int16, len(b)/2)
+	for i := range out {
+		out[i] = int16(binary.LittleEndian.Uint16(b[i*2 : i*2+2]))
+	}
+	return out
 }

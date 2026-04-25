@@ -61,12 +61,16 @@ type Pipeline struct {
 	isSpeaking atomic.Int32
 
 	// Callbacks wired by agent/main.go.
-	//   OnOpusFrames: write Opus frames to the LiveKit track. Must honor ctx.Done()
-	//                 between frames so barge-in can stop playback mid-word.
+	//   OnOpusFrames: invoked ONCE per response turn. The implementation must
+	//                 drain frameC, pace at 20ms intervals, and write each frame
+	//                 to the LiveKit audio track. The channel closes when the
+	//                 turn's full audio has been streamed (or ctx is cancelled).
+	//                 The implementation must honor ctx.Done() so barge-in stops
+	//                 playback mid-word.
 	//   OnSpeakText:  used in D-ID video mode instead of OnOpusFrames.
 	//   OnEvent:      receives every MetricEvent for publishing to the data channel.
 	//   OnTranscript: receives the committed user transcript (for logging).
-	OnOpusFrames func(ctx context.Context, frames [][]byte)
+	OnOpusFrames func(ctx context.Context, frameC <-chan []byte)
 	OnSpeakText  func(text string)
 	OnEvent      func(evt MetricEvent)
 	OnTranscript func(text string)
@@ -126,7 +130,11 @@ func (p *Pipeline) SpeakText(text string) {
 	ctx := p.newSpeakContext()
 	p.isSpeaking.Store(1)
 	defer p.isSpeaking.Store(0)
-	p.synth(ctx, text)
+
+	chunkQ := make(chan string, 1)
+	chunkQ <- text
+	close(chunkQ)
+	p.speakChunks(ctx, chunkQ)
 }
 
 // Run is the main event loop. Blocks until STT connection closes.
@@ -277,7 +285,24 @@ func (p *Pipeline) fireResponse(fullText string) {
 	p.isSpeaking.Store(0)
 }
 
-// respond streams LLM → TTS with barge-in support via ctx.
+// respond streams LLM → pipelined-TTS with barge-in support via ctx.
+//
+// Architecture:
+//
+//	tokenC  ── LLM tokens ───────────────► chunkQ  ── sentence-sized chunks
+//	                                            │
+//	                                            ▼
+//	                          speakChunks (single goroutine, drains chunkQ)
+//	                                            │
+//	                                            ▼  per chunk: streaming TTS → frames
+//	                                          frameC ─────────────────────► OnOpusFrames
+//	                                                                        (paces 20ms)
+//
+// chunkQ is buffered (size 4) so the LLM token loop can push the next sentence
+// before the current one finishes synthesizing. speakChunks blocks on TTS
+// (which streams) but the OnOpusFrames consumer drains frames in real time,
+// so the wall-clock latency for each chunk is ~250ms instead of the ~1500ms
+// io.ReadAll-then-batch-encode it used to be.
 func (p *Pipeline) respond(ctx context.Context, userText string) {
 	turnID := p.turnID.Load()
 	llmStartDelay := p.turnDelayMs()
@@ -285,27 +310,48 @@ func (p *Pipeline) respond(ctx context.Context, userText string) {
 	p.emit("llm_start", "", llmStartDelay)
 
 	tokenC := make(chan string, 128)
-	llmStart := time.Now()
-	firstToken := false
-	var fullReply strings.Builder
-	var chunkBuf strings.Builder
+	chunkQ := make(chan string, 4)
 
+	// Audio worker: drains chunkQ → calls TTS streaming → publishes frames
+	speakDone := make(chan struct{})
+	go func() {
+		defer close(speakDone)
+		p.speakChunks(ctx, chunkQ)
+	}()
+
+	// LLM streaming
+	llmStart := time.Now()
 	go func() {
 		if _, err := p.llm.Stream(userText, tokenC); err != nil {
 			log.Printf("[turn-%d] LLM error: %v", turnID, err)
 		}
 	}()
 
-	// Drain tokens; if barge-in fires, exit and let a goroutine drain the rest.
+	firstToken := false
+	var fullReply, chunkBuf strings.Builder
+
+	pushChunk := func() {
+		r := strings.TrimSpace(chunkBuf.String())
+		chunkBuf.Reset()
+		if r == "" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+		case chunkQ <- r:
+		}
+	}
+
 	for token := range tokenC {
 		select {
 		case <-ctx.Done():
 			log.Printf("[turn-%d] LLM cancelled mid-stream (barge-in)", turnID)
-			// Drain remaining tokens in background so LLM goroutine doesn't block
 			go func() {
 				for range tokenC {
 				}
 			}()
+			close(chunkQ)
+			<-speakDone
 			return
 		default:
 		}
@@ -318,62 +364,115 @@ func (p *Pipeline) respond(ctx context.Context, userText string) {
 		fullReply.WriteString(token)
 		chunkBuf.WriteString(token)
 		if shouldFlush(chunkBuf.String()) {
-			chunk := strings.TrimSpace(chunkBuf.String())
-			if chunk != "" {
-				p.synth(ctx, chunk)
-			}
-			chunkBuf.Reset()
+			pushChunk()
 		}
 	}
-	// Flush remainder
-	if r := strings.TrimSpace(chunkBuf.String()); r != "" {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		p.synth(ctx, r)
-	}
+	pushChunk()      // remainder
+	close(chunkQ)    // signal speakChunks no more text incoming
 
 	llmTotal := time.Since(llmStart).Milliseconds()
 	log.Printf("[turn-%d] llm_done (+%dms): %q", turnID, llmTotal, fullReply.String())
 	p.emit("llm_done", fullReply.String(), llmTotal)
+
+	<-speakDone // wait for all audio to be published
 }
 
-// synth converts one text chunk to audio and publishes frames.
-// The ctx is threaded into OnOpusFrames so the frame loop can exit on barge-in.
-func (p *Pipeline) synth(ctx context.Context, text string) {
-	// D-ID video mode: delegate — D-ID handles its own TTS + lipsync
-	if p.OnSpeakText != nil {
-		p.OnSpeakText(text)
-		return
-	}
+// speakChunks consumes text chunks from chunkQ, synthesizes each via streaming
+// TTS, and publishes the resulting Opus frames through OnOpusFrames.
+//
+// Returns only when chunkQ is closed AND all in-flight audio has been emitted
+// (or ctx is cancelled). Used by both respond() (multi-chunk) and SpeakText()
+// (single chunk for greetings).
+//
+// In D-ID video mode (OnSpeakText set), bypasses TTS entirely and forwards
+// each chunk's text to D-ID, which handles its own audio + lipsync.
+func (p *Pipeline) speakChunks(ctx context.Context, chunkQ <-chan string) {
 	turnID := p.turnID.Load()
-	ttsStart := time.Now()
-	log.Printf("[turn-%d] tts_start: %q", turnID, text)
-	p.emit("tts_start", text, p.turnDelayMs())
 
-	frames, err := p.tts.SynthesizeOpus(text)
-	if err != nil {
-		log.Printf("[turn-%d] tts error: %v", turnID, err)
+	// ── D-ID video mode ─────────────────────────────────────────────────
+	if p.OnSpeakText != nil {
+		for chunk := range chunkQ {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			p.OnSpeakText(chunk)
+		}
 		return
 	}
-	ttsElapsed := time.Since(ttsStart).Milliseconds()
-	log.Printf("[turn-%d] tts_first_frame (+%dms)", turnID, ttsElapsed)
-	p.emit("tts_first_frame", "", ttsElapsed)
 
-	// Don't publish if we've been cancelled
-	select {
-	case <-ctx.Done():
-		log.Printf("[turn-%d] tts cancelled before publish (barge-in)", turnID)
+	// ── Audio mode (Deepgram TTS streaming → OnOpusFrames) ─────────────
+	if p.OnOpusFrames == nil {
+		// No audio sink wired; drain to unblock producer
+		for range chunkQ {
+		}
 		return
-	default:
 	}
 
-	if p.OnOpusFrames != nil && len(frames) > 0 {
-		p.emit("audio_playing", "", p.turnDelayMs())
-		p.OnOpusFrames(ctx, frames)
+	frameC := make(chan []byte, 128)
+
+	// Start single OnOpusFrames consumer for the whole turn
+	pubDone := make(chan struct{})
+	go func() {
+		defer close(pubDone)
+		p.OnOpusFrames(ctx, frameC)
+	}()
+
+	// Drive synth chunk-by-chunk; each chunk's frames flow into the same frameC
+	// in order, so the publisher hears one continuous stream per turn.
+	cancelled := false
+	for chunk := range chunkQ {
+		if cancelled {
+			continue // keep draining to let producer close
+		}
+		select {
+		case <-ctx.Done():
+			cancelled = true
+			continue
+		default:
+		}
+
+		ttsStart := time.Now()
+		log.Printf("[turn-%d] tts_start: %q", turnID, chunk)
+		p.emit("tts_start", chunk, p.turnDelayMs())
+
+		// Per-chunk frame channel so we can detect first-frame for metrics
+		chunkFrameC := make(chan []byte, 64)
+		errC := make(chan error, 1)
+		go func() {
+			errC <- p.tts.StreamOpusFrames(ctx, chunk, chunkFrameC)
+			close(chunkFrameC)
+		}()
+
+		firstFrame := true
+		for frame := range chunkFrameC {
+			if firstFrame {
+				ttsElapsed := time.Since(ttsStart).Milliseconds()
+				log.Printf("[turn-%d] tts_first_frame (+%dms)", turnID, ttsElapsed)
+				p.emit("tts_first_frame", "", ttsElapsed)
+				p.emit("audio_playing", "", p.turnDelayMs())
+				firstFrame = false
+			}
+			select {
+			case <-ctx.Done():
+				cancelled = true
+				go func() {
+					for range chunkFrameC {
+					}
+				}()
+				goto chunkDone
+			case frameC <- frame:
+			}
+		}
+	chunkDone:
+		if err := <-errC; err != nil && ctx.Err() == nil {
+			log.Printf("[turn-%d] tts error: %v", turnID, err)
+		}
 	}
+
+	close(frameC)
+	<-pubDone
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
