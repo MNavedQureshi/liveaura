@@ -296,9 +296,14 @@ func (c *cerebrasLLM) Stream(userText string, tokenC chan<- string) (string, err
 
 	model := os.Getenv("CEREBRAS_MODEL")
 	if model == "" {
-		// Strongest model on Cerebras free tier; fastest TTFT in the industry.
-		// Other options: "llama3.1-8b" (fastest, weaker), "llama-4-scout-17b-16e-instruct".
-		model = "llama-3.3-70b"
+		// Universally available on Cerebras free tier. Fastest TTFT, weaker
+		// than the bigger llamas but always accessible (no verified-org req).
+		// Override via CEREBRAS_MODEL if your key has access to:
+		//   - llama-4-scout-17b-16e-instruct  (smarter, also free for most)
+		//   - llama-3.3-70b                   (gated behind verified org)
+		//   - qwen-3-32b                      (multilingual, free for most)
+		// Use scripts/check_cerebras.py to list what your key supports.
+		model = "llama3.1-8b"
 	}
 
 	messages := append(
