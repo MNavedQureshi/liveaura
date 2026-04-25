@@ -125,7 +125,10 @@ func (g *geminiLLM) Stream(userText string, tokenC chan<- string) (string, error
 
 	model := os.Getenv("GEMINI_MODEL")
 	if model == "" {
-		model = "gemini-2.0-flash"
+		// gemini-2.5-flash: best free Gemini for voice (5 RPM free tier, decent quality).
+		// gemini-2.0-flash now requires Tier 1 billing on most keys.
+		// For higher RPM on free tier, override with GEMINI_MODEL=gemini-2.5-flash-lite (10 RPM).
+		model = "gemini-2.5-flash"
 	}
 	apiKey := os.Getenv("GEMINI_API_KEY")
 
