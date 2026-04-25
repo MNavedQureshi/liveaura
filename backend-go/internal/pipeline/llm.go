@@ -17,13 +17,15 @@ type LLM interface {
 }
 
 // NewLLM returns an LLM based on LLM_PROVIDER env var.
-// Values: "gemini", "groq", or default "anthropic".
+// Values: "gemini", "groq", "cerebras", or default "anthropic".
 func NewLLM(systemPrompt string) LLM {
 	switch os.Getenv("LLM_PROVIDER") {
 	case "gemini":
 		return newGeminiLLM(systemPrompt)
 	case "groq":
 		return newGroqLLM(systemPrompt)
+	case "cerebras":
+		return newCerebrasLLM(systemPrompt)
 	default:
 		return newAnthropicLLM(systemPrompt)
 	}
@@ -267,5 +269,91 @@ func (g *groqLLM) Stream(userText string, tokenC chan<- string) (string, error) 
 	close(tokenC)
 
 	g.history = append(g.history, map[string]string{"role": "assistant", "content": full.String()})
+	return full.String(), scanner.Err()
+}
+
+// ── Cerebras ─────────────────────────────────────────────────────────────────
+// Cerebras Cloud uses an OpenAI-compatible API. Free tier: 30 RPM, ~1M tokens/day,
+// served at ~2,200 tokens/second on their wafer-scale chips. Best free option
+// for voice agents — much higher RPM than Gemini (10) and much smarter llama
+// (3.3-70b) than Groq's free llama-3.1-8b-instant.
+
+type cerebrasLLM struct {
+	systemPrompt string
+	history      []map[string]string
+	client       *http.Client
+}
+
+func newCerebrasLLM(systemPrompt string) *cerebrasLLM {
+	return &cerebrasLLM{systemPrompt: systemPrompt, client: &http.Client{}}
+}
+
+func (c *cerebrasLLM) Stream(userText string, tokenC chan<- string) (string, error) {
+	c.history = append(c.history, map[string]string{"role": "user", "content": userText})
+
+	model := os.Getenv("CEREBRAS_MODEL")
+	if model == "" {
+		// Strongest model on Cerebras free tier; fastest TTFT in the industry.
+		// Other options: "llama3.1-8b" (fastest, weaker), "llama-4-scout-17b-16e-instruct".
+		model = "llama-3.3-70b"
+	}
+
+	messages := append(
+		[]map[string]string{{"role": "system", "content": c.systemPrompt}},
+		c.history...,
+	)
+	payload := map[string]any{
+		"model":      model,
+		"messages":   messages,
+		"max_tokens": 1024,
+		"stream":     true,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", "https://api.cerebras.ai/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("CEREBRAS_API_KEY"))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("cerebras request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("cerebras returned %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	var full strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	// Cerebras can emit chunks bigger than the default 64KB scanner buffer
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		choices, _ := event["choices"].([]any)
+		for _, ch := range choices {
+			choice, _ := ch.(map[string]any)
+			delta, _ := choice["delta"].(map[string]any)
+			if text, ok := delta["content"].(string); ok && text != "" {
+				full.WriteString(text)
+				tokenC <- text
+			}
+		}
+	}
+	close(tokenC)
+
+	c.history = append(c.history, map[string]string{"role": "assistant", "content": full.String()})
 	return full.String(), scanner.Err()
 }
