@@ -171,18 +171,18 @@ function AgentCard({ name, speaking, connected }: {
     <div style={{
       background: C.surface, border: `1px solid ${C.border}`,
       borderRadius: C.r7, boxShadow: C.shadowMd,
-      padding: "32px 32px 28px",
+      padding: "18px 16px",
       display: "flex", flexDirection: "column", alignItems: "center",
-      justifyContent: "center", gap: 20,
-      flex: 1, minWidth: 0,
+      justifyContent: "flex-start", gap: 12,
+      width: 240, flexShrink: 0, minWidth: 0,
     }}>
       <div style={{
-        fontFamily: C.sans, fontSize: 11, fontWeight: 600,
+        fontFamily: C.sans, fontSize: 10, fontWeight: 600,
         letterSpacing: 1, textTransform: "uppercase", color: C.ink4,
       }}>AI Agent</div>
 
-      {/* Orb */}
-      <div style={{ position: "relative", width: 130, height: 130 }}>
+      {/* Orb (compacted from 130 → 84 to free space for the live conversation) */}
+      <div style={{ position: "relative", width: 84, height: 84 }}>
         <div style={{
           position: "absolute", inset: -14, borderRadius: "50%",
           background: `radial-gradient(circle, ${C.primary}22 0%, transparent 70%)`,
@@ -212,7 +212,7 @@ function AgentCard({ name, speaking, connected }: {
           position: "absolute", inset: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
-          <svg width={38} height={38} viewBox="0 0 16 16" fill="none">
+          <svg width={26} height={26} viewBox="0 0 16 16" fill="none">
             <rect x="3" y="5" width="10" height="8" rx="2"
                   stroke="rgba(255,255,255,0.88)" strokeWidth="1.3"/>
             <circle cx="6"  cy="9" r="1.1" fill="rgba(255,255,255,0.88)"/>
@@ -223,40 +223,26 @@ function AgentCard({ name, speaking, connected }: {
         </div>
       </div>
 
-      {/* Name + status */}
+      {/* Name + status (compact single row) */}
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontFamily: C.sans, fontSize: 22, fontWeight: 700, color: C.ink, letterSpacing: -0.4 }}>
+        <div style={{ fontFamily: C.sans, fontSize: 15, fontWeight: 600, color: C.ink, letterSpacing: -0.2 }}>
           {name}
         </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 4 }}>
           <span style={{
-            width: 8, height: 8, borderRadius: "50%", background: statusDot,
-            boxShadow: speaking ? `0 0 10px ${C.primary}` : "none",
+            width: 6, height: 6, borderRadius: "50%", background: statusDot,
+            boxShadow: speaking ? `0 0 8px ${C.primary}` : "none",
             transition: "all 400ms ease",
           }}/>
           <span style={{
-            fontFamily: C.sans, fontSize: 15, color: statusText,
+            fontFamily: C.sans, fontSize: 12, color: statusText,
             fontWeight: speaking ? 600 : 400, transition: "color 400ms ease",
           }}>{status}</span>
         </div>
       </div>
 
-      {/* Agent waveform */}
-      <div style={{ width: "100%", paddingTop: 4 }}>
-        <Waveform active={speaking} color={C.primary} bars={44} height={52}/>
-      </div>
-
-      {/* Context hint */}
-      <div style={{
-        fontFamily: C.sans, fontSize: 12.5, color: C.ink3,
-        textAlign: "center", lineHeight: 1.65, maxWidth: 280,
-        padding: "10px 14px", background: C.surfaceAlt,
-        borderRadius: C.r4, border: `1px solid ${C.borderSoft}`,
-      }}>
-        {!connected && "Setting up the voice connection…"}
-        {connected && speaking && "🔊 Speaking — it pauses automatically when you talk."}
-        {connected && !speaking && "🎙 Listening — just speak, no button needed."}
-      </div>
+      {/* Slim waveform */}
+      <Waveform active={speaking} color={C.primary} bars={28} height={22}/>
     </div>
   );
 }
@@ -274,26 +260,26 @@ function MicCard({ muted }: { muted: boolean }) {
     <div style={{
       background: C.surface, border: `1px solid ${C.border}`,
       borderRadius: C.r7, boxShadow: C.shadowMd,
-      padding: "28px 22px",
+      padding: "16px 14px",
       display: "flex", flexDirection: "column", alignItems: "center",
-      justifyContent: "center", gap: 18,
-      width: 230, flexShrink: 0,
+      justifyContent: "flex-start", gap: 10,
+      width: 200, flexShrink: 0,
     }}>
       <div style={{
-        fontFamily: C.sans, fontSize: 11, fontWeight: 600,
+        fontFamily: C.sans, fontSize: 10, fontWeight: 600,
         letterSpacing: 1, textTransform: "uppercase", color: C.ink4,
       }}>Your Mic</div>
 
-      {/* Big mic status circle */}
+      {/* Compact mic status circle */}
       <div style={{
-        width: 80, height: 80, borderRadius: "50%",
+        width: 56, height: 56, borderRadius: "50%",
         background: muted ? C.redSoft : C.greenSoft,
         border: `2px solid ${muted ? "#f0b8b8" : "#b8ddb4"}`,
         display: "flex", alignItems: "center", justifyContent: "center",
         transition: "all 300ms ease",
       }}>
         <div style={{
-          width: 48, height: 48, borderRadius: "50%",
+          width: 32, height: 32, borderRadius: "50%",
           background: muted ? C.red : C.green,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
@@ -303,21 +289,14 @@ function MicCard({ muted }: { muted: boolean }) {
 
       <div style={{ textAlign: "center" }}>
         <div style={{
-          fontFamily: C.sans, fontSize: 14, fontWeight: 600,
+          fontFamily: C.sans, fontSize: 12, fontWeight: 600,
           color: muted ? C.red : C.green,
         }}>
-          {muted ? "Microphone OFF" : "Microphone ON"}
-        </div>
-        <div style={{ fontFamily: C.sans, fontSize: 12, color: C.ink3, marginTop: 4, lineHeight: 1.5 }}>
-          {muted ? "Tap Unmute to speak" : "Agent can hear you"}
+          {muted ? "Mic OFF" : "Mic ON"}
         </div>
       </div>
 
-      {/* Your waveform */}
-      <div style={{ width: "100%" }}>
-        <Waveform active={!muted} color={muted ? C.red : C.green} bars={22} height={40}/>
-      </div>
-      <div style={{ fontFamily: C.sans, fontSize: 11, color: C.ink4 }}>Voice activity</div>
+      <Waveform active={!muted} color={muted ? C.red : C.green} bars={20} height={20}/>
     </div>
   );
 }
@@ -465,6 +444,7 @@ function TurnCard({ turn }: { turn: Turn }) {
         display: "flex",
         flexDirection: "column",
         gap: 8,
+        animation: "turnIn 380ms ease-out",
       }}
     >
       {/* Turn header */}
@@ -484,10 +464,16 @@ function TurnCard({ turn }: { turn: Turn }) {
           {turn.bargeIn && (
             <span
               style={{
-                color: C.red,
+                color: "#fff",
+                background: C.red,
                 fontWeight: 700,
-                animation: "bargeFade 4s ease-out forwards",
+                fontSize: 10,
+                letterSpacing: 0.8,
+                padding: "3px 8px",
+                borderRadius: 999,
+                animation: "bargeFlash 7s ease-out forwards",
                 display: "inline-block",
+                boxShadow: `0 0 0 0 ${C.red}88`,
               }}
             >⚡ BARGED IN</span>
           )}
@@ -813,6 +799,19 @@ export default function CallRoom({
         @keyframes orbGlow  { 0%,100%{opacity:0.6;transform:scale(1);}  50%{opacity:1;transform:scale(1.08);} }
         @keyframes orbRing  { 0%{transform:scale(1);opacity:0.6;} 100%{transform:scale(1.7);opacity:0;} }
         @keyframes bargeFade { 0%,70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+        @keyframes turnIn {
+          0%   { opacity: 0; transform: translateY(8px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bargeFlash {
+          0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(231,76,60,0.7); }
+          15%  { transform: scale(1.18); box-shadow: 0 0 0 14px rgba(231,76,60,0); }
+          30%  { transform: scale(1);    box-shadow: 0 0 0 0 rgba(231,76,60,0); }
+          45%  { transform: scale(1.12); box-shadow: 0 0 0 10px rgba(231,76,60,0); }
+          60%  { transform: scale(1);    box-shadow: 0 0 0 0 rgba(231,76,60,0); }
+          85%  { opacity: 1; }
+          100% { opacity: 0; visibility: hidden; }
+        }
       `}</style>
       <LiveKitRoom
         token={token}
