@@ -153,7 +153,7 @@ function ConsoleApp() {
   };
 
   // ── Call actions ─────────────────────────────────────────────────
-  const handleLaunch = async (agent, channel, to, { agenda, prompt }) => {
+  const handleLaunch = async (agent, channel, to, { agenda, prompt, voiceMode }) => {
     setShowNew(false);
     const fullPrompt = (prompt || agent.persona || 'You are a helpful AI assistant.')
       + (agenda ? '\n\nMeeting agenda:\n' + agenda : '');
@@ -164,6 +164,7 @@ function ConsoleApp() {
       presentation_script: agent.script || '',
       greeting: agent.greeting || '',
       video_enabled: !!(agent.video && channel === 'web'),
+      voice_mode: voiceMode || 'pipeline',
       source_lang: LANG_CODES[agent.lang_in] || 'en',
       target_lang: LANG_CODES[agent.lang_out] || 'en',
       ...(channel === 'phone'     ? { phone_number:    to } : {}),

@@ -793,6 +793,7 @@ function NewCallModal({ agents, onClose, onLaunch }) {
   const [promptPreset, setPromptPreset] = React.useState('sales');
   const [prompt, setPrompt] = React.useState('You are a professional sales representative. Introduce the product clearly, highlight key benefits, address objections politely, and guide the prospect toward a next step.');
   const [video, setVideo] = React.useState(false);
+  const [voiceMode, setVoiceMode] = React.useState('pipeline');
 
   const PRESETS = {
     sales:    { label: 'Sales Pitch',         text: 'You are a professional sales representative. Introduce the product clearly, highlight key benefits, address objections politely, and guide the prospect toward a next step.' },
@@ -887,12 +888,35 @@ function NewCallModal({ agents, onClose, onLaunch }) {
         </div>
       </Card>
 
+      <Field label="Voice engine" style={{ marginBottom: 14 }}>
+        <div style={{ display: ‘grid’, gridTemplateColumns: ‘1fr 1fr’, gap: 8 }}>
+          {[
+            { key: ‘pipeline’,    label: ‘Standard Pipeline’, sub: ‘Deepgram STT â†’ LLM â†’ Aura TTS’ },
+            { key: ‘gemini_live’, label: ‘Gemini Live’,       sub: ‘Native audio Â· model handles VAD’ },
+          ].map(({ key, label, sub }) => {
+            const on = voiceMode === key;
+            return (
+              <button key={key} onClick={() => setVoiceMode(key)} style={{
+                padding: ‘10px 12px’, borderRadius: T.r3, cursor: ‘pointer’, textAlign: ‘left’,
+                border: `1.5px solid ${on ? T.primary : T.border}`,
+                background: on ? T.primarySoft : T.surface,
+                display: ‘flex’, flexDirection: ‘column’, gap: 3,
+              }}>
+                <span style={{ fontFamily: T.sans, fontSize: 12.5, fontWeight: 600, color: on ? T.primarySoftInk : T.ink }}>{label}</span>
+                <span style={{ fontFamily: T.sans, fontSize: 11, color: on ? T.primarySoftInk : T.ink3, opacity: 0.8 }}>{sub}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
       <div style={{ padding: 12, borderRadius: T.r3, background: T.surfaceAlt, marginBottom: 4 }}>
-        <div style={{ fontFamily: T.sans, fontSize: 11, color: T.ink3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Pre-flight</div>
+        <div style={{ fontFamily: T.sans, fontSize: 11, color: T.ink3, fontWeight: 500, textTransform: ‘uppercase’, letterSpacing: 0.5, marginBottom: 6 }}>Pre-flight</div>
         <KV label="Agent">{agent.name}</KV>
         <KV label="Voice">{agent.voice}</KV>
         <KV label="Language">{agent.lang_in === agent.lang_out ? agent.lang_in : `${agent.lang_in} â†’ ${agent.lang_out}`}</KV>
-        <KV label="Video">{video && channel === 'web' ? 'On' : 'Off'}</KV>
+        <KV label="Video">{video && channel === ‘web’ ? ‘On’ : ‘Off’}</KV>
+        <KV label="Engine">{voiceMode === ‘gemini_live’ ? ‘Gemini Live’ : ‘Standard Pipeline’}</KV>
       </div>
 
       </div>
@@ -901,7 +925,7 @@ function NewCallModal({ agents, onClose, onLaunch }) {
         <Btn onClick={onClose}>Cancel</Btn>
         <div style={{ flex: 1 }}/>
         <Btn kind="primary" icon={<Ic.Play size={12} c="#fff"/>}
-          onClick={() => onLaunch({ ...agent, video: video && channel === 'web' }, channel, to, { agenda, prompt })}>Launch call</Btn>
+          onClick={() => onLaunch({ ...agent, video: video && channel === 'web' }, channel, to, { agenda, prompt, voiceMode })}>Launch call</Btn>
       </div>
     </ModalShell>
   );
