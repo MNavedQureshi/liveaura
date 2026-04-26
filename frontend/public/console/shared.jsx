@@ -41,6 +41,8 @@ const Ic = {
   Copy:   (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke={p.c||'currentColor'} strokeWidth="1.4"/><path d="M3 11V4a1 1 0 0 1 1-1h7" stroke={p.c||'currentColor'} strokeWidth="1.4"/></svg>,
   X:      (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 16 16" fill="none"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke={p.c||'currentColor'} strokeWidth="1.4" strokeLinecap="round"/></svg>,
   Send:   (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 16 16" fill="none"><path d="M2 8l12-5-4.5 12L7 9.5 2 8z" stroke={p.c||'currentColor'} strokeWidth="1.4" strokeLinejoin="round"/></svg>,
+  Zap:    (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 16 16" fill="none"><path d="M9 1.5L3 9h4l-1 5.5L13 7H9l1-5.5z" stroke={p.c||'currentColor'} strokeWidth="1.4" strokeLinejoin="round"/></svg>,
+  Volume: (p) => <svg width={p.size||16} height={p.size||16} viewBox="0 0 16 16" fill="none"><path d="M2.5 6v4h2.5l3.5 3V3l-3.5 3H2.5z" stroke={p.c||'currentColor'} strokeWidth="1.4" strokeLinejoin="round"/><path d="M11 5.5c1 1 1 4 0 5M12.5 4c1.7 1.7 1.7 6.3 0 8" stroke={p.c||'currentColor'} strokeWidth="1.4" strokeLinecap="round"/></svg>,
 };
 
 // ═══ BRAND ═════════════════════════════════════════════════════════
