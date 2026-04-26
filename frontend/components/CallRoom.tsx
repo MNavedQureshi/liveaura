@@ -578,19 +578,38 @@ function ConversationPanel() {
   // Flat chat: every user_done event becomes a caller bubble; every llm_done
   // event becomes an agent bubble. No grouping, no aggregation — every
   // utterance the backend emits shows as its own message in arrival order.
-  // Per-event timing chips come from sibling events with the same turn_id
-  // (best-effort lookup; if a metric is missing, the chip just doesn't render).
+  //
+  // ALL timings use the backend's `delay_ms` field directly. delay_ms is
+  // milliseconds since this turn's `speech_started` event (= turn start),
+  // so subtracting two delay_ms values gives the elapsed time between two
+  // pipeline phases unambiguously, regardless of clock skew or out-of-order
+  // arrival. Computing from `ts` (wall-clock) was wrong: TTS often starts
+  // BEFORE llm_done finishes (streaming), so tts.ts - llm_done.ts went
+  // negative and clamped to 0.
   type Msg = {
     key: string;
     who: "caller" | "agent";
     text: string;
     ts: number;
     turnId: number;
-    sttMs?: number;     // user audio → STT final
-    llmMs?: number;     // llm_first_token → llm_done
-    ttsMs?: number;     // llm_done → tts_first_frame
+
+    // Caller-only metrics (only set when who === "caller"):
+    sttFirstMs?: number;    // speech_started → first user_interim (STT TTFB)
+    sttTotalMs?: number;    // speech_started → user_done (full STT incl. endpointing)
+
+    // Agent-only metrics (only set when who === "agent"):
+    llmTtftMs?: number;     // llm_start → llm_first_token (LLM time-to-first-token)
+    llmStreamMs?: number;   // llm_first_token → llm_done (LLM streaming tail)
+    llmTotalMs?: number;    // llm_start → llm_done
+    ttsTtfbMs?: number;     // tts_start → tts_first_frame (TTS time-to-first-byte)
+    publishMs?: number;     // tts_first_frame → audio_playing (LiveKit publish lag)
+    replyMs?: number;       // user_done → audio_playing (response latency — what user feels)
+    e2eMs?: number;         // speech_started → audio_playing (end-to-end turn)
+
+    // Only ever true for agent messages — the response that got cut off.
     barge?: boolean;
   };
+
   const messages = useMemo<Msg[]>(() => {
     // Index events by turn_id so we can grab sibling timings for each bubble.
     const byTurn = new Map<number, MetricEvent[]>();
@@ -599,39 +618,54 @@ function ConversationPanel() {
       list.push(e);
       byTurn.set(e.turn_id, list);
     }
+    // findEv returns the FIRST event of `type` in the turn — important for
+    // tts_start which fires per-chunk; we want the first chunk's TTFB.
     const findEv = (turnId: number, type: string) =>
-      byTurn.get(turnId)?.find((e) => e.type === type);
-    const isBarged = (turnId: number) =>
-      !!byTurn.get(turnId)?.some((e) => e.type === "barge_in");
+      byTurn.get(turnId)?.find((ev) => ev.type === type);
+    const turnHasBarge = (turnId: number) =>
+      !!byTurn.get(turnId)?.some((ev) => ev.type === "barge_in");
+
+    const sub = (a?: number, b?: number) =>
+      a != null && b != null ? Math.max(0, a - b) : undefined;
 
     const out: Msg[] = [];
     events.forEach((e, i) => {
       if (e.type === "user_done" && e.text) {
-        const startEv = findEv(e.turn_id, "speech_started");
-        const sttMs = startEv ? Math.max(0, e.ts - startEv.ts) : undefined;
+        const firstInterim = findEv(e.turn_id, "user_interim");
         out.push({
           key: `u-${e.turn_id}-${i}`,
           who: "caller",
           text: e.text,
           ts: e.ts,
           turnId: e.turn_id,
-          sttMs,
-          barge: isBarged(e.turn_id),
+          sttFirstMs: firstInterim?.delay_ms,
+          sttTotalMs: e.delay_ms,
         });
       } else if (e.type === "llm_done" && e.text) {
-        const firstTok = findEv(e.turn_id, "llm_first_token");
-        const ttsFirst = findEv(e.turn_id, "tts_first_frame");
-        const llmMs = firstTok ? Math.max(0, e.ts - firstTok.ts) : undefined;
-        const ttsMs = ttsFirst ? Math.max(0, ttsFirst.ts - e.ts) : undefined;
+        const llmStart      = findEv(e.turn_id, "llm_start");
+        const firstTok      = findEv(e.turn_id, "llm_first_token");
+        const ttsStart      = findEv(e.turn_id, "tts_start");
+        const ttsFirstFrame = findEv(e.turn_id, "tts_first_frame");
+        const audioPlaying  = findEv(e.turn_id, "audio_playing");
+        const userDone      = findEv(e.turn_id, "user_done");
+
         out.push({
           key: `a-${e.turn_id}-${i}`,
           who: "agent",
           text: e.text,
           ts: e.ts,
           turnId: e.turn_id,
-          llmMs,
-          ttsMs,
-          barge: isBarged(e.turn_id),
+          llmTtftMs:   sub(firstTok?.delay_ms,      llmStart?.delay_ms),
+          llmStreamMs: sub(e.delay_ms,              firstTok?.delay_ms),
+          llmTotalMs:  sub(e.delay_ms,              llmStart?.delay_ms),
+          ttsTtfbMs:   sub(ttsFirstFrame?.delay_ms, ttsStart?.delay_ms),
+          publishMs:   sub(audioPlaying?.delay_ms,  ttsFirstFrame?.delay_ms),
+          replyMs:     sub(audioPlaying?.delay_ms,  userDone?.delay_ms),
+          e2eMs:       audioPlaying?.delay_ms,
+          // Barge flag only on agent bubble (the victim), never on caller
+          // (the cause). Even if turn_id reuse glitches, a user message is
+          // never "interrupted" — it's the interrupting force.
+          barge: turnHasBarge(e.turn_id),
         });
       }
     });
@@ -657,13 +691,15 @@ function ConversationPanel() {
     return () => clearTimeout(t);
   }, [lastBargeAt]);
 
-  // Compute a running average of the "▶ audio" latency (only for completed, un-barged turns)
-  const avgLatency = useMemo(() => {
-    const done = turns.filter((t) => t.audioPlayingDelay != null && !t.bargeIn);
+  // Running average reply latency — the number the user actually feels.
+  // user_done → audio_playing, only across completed un-barged agent
+  // messages. This is the latency budget you optimise against (target <300ms).
+  const avgReplyMs = useMemo(() => {
+    const done = messages.filter((m) => m.who === "agent" && !m.barge && m.replyMs != null);
     if (done.length === 0) return null;
-    const sum = done.reduce((a, t) => a + (t.audioPlayingDelay || 0), 0);
+    const sum = done.reduce((a, m) => a + (m.replyMs || 0), 0);
     return Math.round(sum / done.length);
-  }, [turns]);
+  }, [messages]);
 
   return (
     <div
@@ -713,9 +749,11 @@ function ConversationPanel() {
             color: C.ink3,
           }}
         >
-          {avgLatency != null && (
-            <span>
-              avg <strong style={{ color: C.primary }}>{avgLatency}ms</strong>
+          {avgReplyMs != null && (
+            <span title="Average user_done → audio_playing across completed agent replies">
+              avg reply <strong style={{
+                color: avgReplyMs < 300 ? C.green : avgReplyMs < 700 ? C.primary : C.red,
+              }}>{fmtMs(avgReplyMs)}</strong>
             </span>
           )}
           <span>
@@ -790,7 +828,46 @@ function ConversationPanel() {
   );
 }
 
-function ChatBubble({ msg }: { msg: { who: "caller" | "agent"; text: string; ts: number; turnId: number; sttMs?: number; llmMs?: number; ttsMs?: number; barge?: boolean } }) {
+type ChatMsg = {
+  who: "caller" | "agent"; text: string; ts: number; turnId: number;
+  sttFirstMs?: number; sttTotalMs?: number;
+  llmTtftMs?: number; llmStreamMs?: number; llmTotalMs?: number;
+  ttsTtfbMs?: number; publishMs?: number;
+  replyMs?: number; e2eMs?: number;
+  barge?: boolean;
+};
+
+function fmtMs(ms?: number): string | null {
+  if (ms == null) return null;
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function Chip2({ label, ms, tone }: { label: string; ms?: number; tone: "blue" | "green" | "amber" | "violet" | "neutral" | "red" }) {
+  const v = fmtMs(ms);
+  if (!v) return null;
+  const palette: Record<typeof tone, { bg: string; fg: string }> = {
+    blue:    { bg: "#E0E7FF", fg: "#3730A3" },
+    green:   { bg: "#D1FAE5", fg: "#065F46" },
+    amber:   { bg: "#FEF3C7", fg: "#92400E" },
+    violet:  { bg: "#EDE9FE", fg: "#5B21B6" },
+    neutral: { bg: "#F3F4F6", fg: "#374151" },
+    red:     { bg: C.red,     fg: "#fff" },
+  };
+  const p = palette[tone];
+  return (
+    <span style={{
+      fontFamily: C.mono, fontSize: 9.5,
+      padding: "1px 6px", borderRadius: 4,
+      background: p.bg, color: p.fg,
+      whiteSpace: "nowrap",
+    }}>
+      {label} {v}
+    </span>
+  );
+}
+
+function ChatBubble({ msg }: { msg: ChatMsg }) {
   const isAgent = msg.who === "agent";
   const time = new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   return (
@@ -814,7 +891,7 @@ function ChatBubble({ msg }: { msg: { who: "caller" | "agent"; text: string; ts:
       >
         {isAgent ? "AI" : "U"}
       </div>
-      <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 4, alignItems: isAgent ? "flex-start" : "flex-end" }}>
+      <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", gap: 4, alignItems: isAgent ? "flex-start" : "flex-end" }}>
         <div
           style={{
             padding: "8px 12px",
@@ -828,19 +905,33 @@ function ChatBubble({ msg }: { msg: { who: "caller" | "agent"; text: string; ts:
         >
           {msg.text}
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        {/* Per-message latency breakdown. Caller bubble shows STT phase only
+            (no TTS for the user). Agent bubble shows the full pipeline split
+            so you can see exactly where the budget went: LLM TTFT, LLM
+            streaming tail, TTS TTFB, LiveKit publish lag, then two roll-ups:
+            "reply" = what the user actually felt (user_done → audio), and
+            "e2e" = full turn from speech_started. */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", maxWidth: "100%" }}>
           <span style={{ fontFamily: C.mono, fontSize: 9.5, color: C.ink4 }}>{time}</span>
-          {msg.sttMs != null && (
-            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "#E0E7FF", color: "#3730A3" }}>STT {msg.sttMs}ms</span>
+          {msg.who === "caller" && (
+            <>
+              <Chip2 label="STT-1st" ms={msg.sttFirstMs} tone="blue"/>
+              <Chip2 label="STT"     ms={msg.sttTotalMs} tone="blue"/>
+            </>
           )}
-          {msg.llmMs != null && (
-            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "#D1FAE5", color: "#065F46" }}>LLM {msg.llmMs}ms</span>
-          )}
-          {msg.ttsMs != null && (
-            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "#FEF3C7", color: "#92400E" }}>TTS {msg.ttsMs}ms</span>
+          {msg.who === "agent" && (
+            <>
+              <Chip2 label="LLM-TTFT" ms={msg.llmTtftMs}   tone="green"/>
+              <Chip2 label="LLM-tail" ms={msg.llmStreamMs} tone="green"/>
+              <Chip2 label="LLM"      ms={msg.llmTotalMs}  tone="green"/>
+              <Chip2 label="TTS"      ms={msg.ttsTtfbMs}   tone="amber"/>
+              <Chip2 label="publish"  ms={msg.publishMs}   tone="violet"/>
+              <Chip2 label="reply"    ms={msg.replyMs}     tone="neutral"/>
+              <Chip2 label="e2e"      ms={msg.e2eMs}       tone="neutral"/>
+            </>
           )}
           {msg.barge && (
-            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: C.red, color: "#fff", fontWeight: 700 }}>⚡ barged</span>
+            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: C.red, color: "#fff", fontWeight: 700 }}>⚡ interrupted</span>
           )}
         </div>
       </div>
