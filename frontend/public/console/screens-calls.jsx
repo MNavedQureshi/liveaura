@@ -238,15 +238,15 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
   const fmtTime = (ms) => timeUnit === 'ms' ? ms + 'ms' : (ms / 1000).toFixed(2) + 's';
 
   // Chat state: seeded once from `transcript` prop, then appended to by
-  // window 'consoleturn' CustomEvent (backend or live wiring dispatches it).
-  // Never replaced — every turn is preserved in sequence.
+  // window 'consoleturn' CustomEvent (the LiveKit subscriber below dispatches
+  // these from the agent's metrics data-channel). Never replaced — every
+  // turn is preserved in sequence.
   const [chat, setChat] = React.useState(() => Array.isArray(transcript) ? [...transcript] : []);
   const chatEndRef = React.useRef(null);
   React.useEffect(() => {
     const handler = (ev) => {
       const turn = ev?.detail;
       if (!turn || !turn.text) return;
-      // Filter to this room only when room id is provided
       if (turn.room && call?.id && turn.room !== call.id) return;
       setChat(prev => [...prev, {
         t: turn.t || new Date().toISOString().slice(11, 19),
@@ -261,6 +261,112 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
   React.useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [chat.length]);
+
+  // Live LiveKit subscriber: connects to the active room as a hidden monitor
+  // (subscribe-only token from POST /api/calls/<room>/viewer-token), listens
+  // for the agent's "metrics" data-channel events, aggregates STT/LLM/TTS
+  // timings per turn, and dispatches a single 'consoleturn' per completed
+  // utterance (one for the caller's user_final, one for the agent's tts done).
+  //
+  // Failure modes are non-fatal: if LiveKit isn't loaded, the room is gone, or
+  // the token endpoint 404s, we just log and the chat keeps showing whatever
+  // was seeded — nothing in the existing pipeline depends on this listener.
+  React.useEffect(() => {
+    if (!call?.id || !window.LivekitClient) return;
+    let room = null;
+    let cancelled = false;
+    // turnId -> aggregator { userText, stt_ms, llm_first_ms, llm_done_ms, tts_first_ms, agentText, t }
+    const turns = new Map();
+    const dispatch = (turn) => window.dispatchEvent(new CustomEvent('consoleturn', { detail: { ...turn, room: call.id } }));
+    const fmtClock = (ms) => {
+      const d = new Date(ms);
+      const h = String(d.getHours()).padStart(2, '0');
+      const m = String(d.getMinutes()).padStart(2, '0');
+      const s = String(d.getSeconds()).padStart(2, '0');
+      return `${h}:${m}:${s}`;
+    };
+
+    (async () => {
+      try {
+        const r = await fetch(`/api/calls/${call.id}/viewer-token`, { method: 'POST' });
+        if (!r.ok) { console.warn('[monitor] viewer-token failed', r.status); return; }
+        const { token, livekit_url } = await r.json();
+        if (cancelled) return;
+        const { Room, RoomEvent } = window.LivekitClient;
+        room = new Room({ adaptiveStream: false, dynacast: false });
+        room.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+          if (topic && topic !== 'metrics') return;
+          let ev;
+          try { ev = JSON.parse(new TextDecoder().decode(payload)); } catch { return; }
+          // ev shape (from backend MetricEvent): { type, turn_id, text, delay_ms, timestamp_ms }
+          const id = ev.turn_id || 'no-id';
+          let agg = turns.get(id);
+          if (!agg) { agg = {}; turns.set(id, agg); }
+
+          switch (ev.type) {
+            case 'speech_started':
+              agg.startedAt = ev.timestamp_ms;
+              break;
+            case 'user_final':
+              // Caller's complete utterance — emit immediately so the user
+              // sees their own line as soon as STT finalises.
+              if (ev.text && !agg.userEmitted) {
+                agg.userEmitted = true;
+                agg.stt_ms = ev.delay_ms || 0;
+                dispatch({
+                  who: 'caller',
+                  text: ev.text,
+                  t: fmtClock(ev.timestamp_ms || Date.now()),
+                });
+              }
+              break;
+            case 'llm_first_token':
+              agg.llm_first_ms = ev.delay_ms || 0;
+              break;
+            case 'llm_done':
+              agg.llm_done_ms = ev.delay_ms || 0;
+              if (ev.text) agg.agentText = ev.text;
+              break;
+            case 'tts_first_frame':
+              agg.tts_first_ms = ev.delay_ms || 0;
+              break;
+            case 'audio_playing':
+              // End of agent's spoken turn — emit the agent line with the
+              // timing breakdown, then drop the aggregator.
+              if (agg.agentText && !agg.agentEmitted) {
+                agg.agentEmitted = true;
+                const stt_ms = agg.stt_ms || 0;
+                const llm_ms = (agg.llm_done_ms || 0) - (agg.llm_first_ms || 0);
+                const tts_ms = (agg.tts_first_ms || 0) - (agg.llm_done_ms || 0);
+                dispatch({
+                  who: 'agent',
+                  text: agg.agentText,
+                  t: fmtClock(ev.timestamp_ms || Date.now()),
+                  metrics: {
+                    stt_ms: Math.max(0, stt_ms),
+                    llm_ms: Math.max(0, llm_ms),
+                    tts_ms: Math.max(0, tts_ms),
+                  },
+                });
+                turns.delete(id);
+              }
+              break;
+            // speech_started, user_interim, user_done, semantic_turn_end,
+            // llm_start, tts_start, barge_in — captured into agg above or
+            // intentionally ignored for chat display.
+          }
+        });
+        await room.connect(livekit_url, token);
+      } catch (e) {
+        console.warn('[monitor] subscribe error:', e?.message || e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try { room?.disconnect(); } catch {}
+    };
+  }, [call?.id]);
 
   const generateSummary = async () => {
     setSummaryLoading(true);

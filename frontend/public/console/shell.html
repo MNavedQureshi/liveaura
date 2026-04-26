@@ -44,6 +44,11 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- Babel standalone (transforms JSX at runtime) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- LiveKit client (UMD; exposes window.LivekitClient). Used by CallRoomScreen
+       to subscribe to a live call as a hidden monitor and stream per-turn
+       STT/LLM/TTS metric events into the chat. Match the version in
+       frontend/package.json so behaviour stays consistent across surfaces. -->
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.17.3/dist/livekit-client.umd.min.js"></script>
 
   <!-- 1. Design tokens (plain JS — sets window.ConsoleTokens) -->
   <script src="/console/tokens.js"></script>

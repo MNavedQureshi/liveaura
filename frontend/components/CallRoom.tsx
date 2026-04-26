@@ -482,7 +482,14 @@ function TurnCard({ turn }: { turn: Turn }) {
         <span>TURN {turn.id}</span>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {turn.bargeIn && (
-            <span style={{ color: C.red, fontWeight: 700 }}>⚡ BARGED IN</span>
+            <span
+              style={{
+                color: C.red,
+                fontWeight: 700,
+                animation: "bargeFade 4s ease-out forwards",
+                display: "inline-block",
+              }}
+            >⚡ BARGED IN</span>
           )}
           {turn.audioPlayingDelay != null && !turn.bargeIn && (
             <span style={{ color: C.primary, fontWeight: 600 }}>
@@ -805,6 +812,7 @@ export default function CallRoom({
         @keyframes orbFloat { 0%,100%{transform:translateY(0px);}  50%{transform:translateY(-9px);} }
         @keyframes orbGlow  { 0%,100%{opacity:0.6;transform:scale(1);}  50%{opacity:1;transform:scale(1.08);} }
         @keyframes orbRing  { 0%{transform:scale(1);opacity:0.6;} 100%{transform:scale(1.7);opacity:0;} }
+        @keyframes bargeFade { 0%,70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
       `}</style>
       <LiveKitRoom
         token={token}

@@ -62,6 +62,7 @@ func RegisterRoutes(r *gin.Engine) {
 	r.GET("/api/calls/:room", getCall)
 	r.DELETE("/api/calls/:room", endCall)
 	r.POST("/api/token", getToken)
+	r.POST("/api/calls/:room/viewer-token", viewerToken)
 }
 
 func health(c *gin.Context) {
@@ -200,5 +201,32 @@ func getToken(c *gin.Context) {
 		"token":       token,
 		"livekit_url": lkclient.URL(),
 		"room_name":   req.RoomName,
+	})
+}
+
+// viewerToken mints a subscribe-only LiveKit token so the operator console
+// can join a live call as a hidden monitor. Mic/camera publishing is denied;
+// the connection only consumes subscribed tracks and data-channel messages
+// (the agent uses the latter to publish per-turn STT/LLM/TTS metrics).
+//
+// Response shape matches getToken so the client can reuse the same connect
+// helper.
+func viewerToken(c *gin.Context) {
+	roomName := c.Param("room")
+	if roomName == "" {
+		c.JSON(400, gin.H{"error": "room is required"})
+		return
+	}
+	identity := fmt.Sprintf("monitor-%s", uuid.New().String()[:8])
+	token, err := lkclient.GenerateToken(roomName, identity, false)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"token":       token,
+		"livekit_url": lkclient.URL(),
+		"room_name":   roomName,
+		"identity":    identity,
 	})
 }
