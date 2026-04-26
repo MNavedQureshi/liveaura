@@ -1,4 +1,4 @@
-// Orbital Console â€” Agent Builder, Call History, Analytics, Settings, Modals
+// Orbital Console â€" Agent Builder, Call History, Analytics, Settings, Modals
 
 
 // ═══ PIPELINE CONFIG CONSTANTS ══════════════════════════════════════
@@ -228,7 +228,7 @@ function AgentBuilderScreen({ agent, onBack, onSave }) {
     name: 'Untitled agent', persona: '', greeting: '',
     channels: ['web'], video: false,
     lang_in: 'English', lang_out: 'English',
-    voice: 'Cartesia Â· Aria (en-US)',
+    voice: 'Cartesia · Aria (en-US)',
     script: '', temperature: 0.7, maxTurns: 40,
     ...PIPELINE_DEFAULTS,
   });
@@ -238,7 +238,7 @@ function AgentBuilderScreen({ agent, onBack, onSave }) {
     <>
       <Topbar
         title={agent ? agent.name : 'New agent'}
-        subtitle={agent ? agent.id : 'Draft Â· unsaved'}
+        subtitle={agent ? agent.id : 'Draft · unsaved'}
         breadcrumb={['Agents', agent ? agent.name : 'New agent']}
         actions={
           <>
@@ -285,7 +285,7 @@ function PersonaTab({ form, up }) {
           </Field>
           <Field label="Voice" hint="Real-time streaming through Cartesia. Preview before saving.">
             <Select value={form.voice} onChange={(e) => up('voice', e.target.value)} style={{ width: '100%' }}
-              options={['Cartesia Â· Aria (en-US)', 'Cartesia Â· Sonic (en-US)', 'Cartesia Â· Neela (en-IN)', 'Cartesia Â· Lyra (en-US)', 'Cartesia Â· Kai (en-GB)']}/>
+              options={['Cartesia · Aria (en-US)', 'Cartesia · Sonic (en-US)', 'Cartesia · Neela (en-IN)', 'Cartesia · Lyra (en-US)', 'Cartesia · Kai (en-GB)']}/>
           </Field>
         </div>
       </Card>
@@ -295,7 +295,7 @@ function PersonaTab({ form, up }) {
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>How the agent thinks, what it knows, how it should behave. This becomes the Claude system prompt.</div>
         <Field label="System prompt" required hint="Tip: describe the tone, knowledge boundaries, and a clear objective for every call.">
           <TextArea rows={10} value={form.persona} onChange={(e) => up('persona', e.target.value)}
-            placeholder="You are Aria, an outbound sales agent for Orbital. Be warm, direct, and curious. Your job is to book a 20-minute implementation review for teams evaluating AI calling infrastructure. Never invent pricing or features â€” redirect to the demo if unsure."/>
+            placeholder="You are Aria, an outbound sales agent for Orbital. Be warm, direct, and curious. Your job is to book a 20-minute implementation review for teams evaluating AI calling infrastructure. Never invent pricing or features â€" redirect to the demo if unsure."/>
         </Field>
       </Card>
 
@@ -304,7 +304,7 @@ function PersonaTab({ form, up }) {
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>The first line the caller hears. Leave blank to let the agent improvise.</div>
         <Field label="Greeting message">
           <TextArea rows={2} value={form.greeting} onChange={(e) => up('greeting', e.target.value)}
-            placeholder="Hi, this is Aria from Orbital â€” thanks for hopping on. Is this still a good time?"/>
+            placeholder="Hi, this is Aria from Orbital â€" thanks for hopping on. Is this still a good time?"/>
         </Field>
       </Card>
     </div>
@@ -351,7 +351,7 @@ function ChannelTab({ form, up }) {
         <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 4 }}>Call channels</div>
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>Pick one or more. You can override per-call at launch time.</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-          <ChCard id="web" icon={<Ic.Globe size={15}/>} title="Web link" desc="Share a URL â€” anyone joins in-browser via LiveKit. No install."/>
+          <ChCard id="web" icon={<Ic.Globe size={15}/>} title="Web link" desc="Share a URL â€" anyone joins in-browser via LiveKit. No install."/>
           <ChCard id="phone" icon={<Ic.Phone size={15}/>} title="Outbound SIP" desc="Agent dials any phone number through your Twilio/Plivo trunk."/>
           <ChCard id="whatsapp" icon={<Ic.Chat size={15}/>} title="WhatsApp" desc="Send a WhatsApp invite with a one-tap join link."/>
         </div>
@@ -359,7 +359,7 @@ function ChannelTab({ form, up }) {
 
       <Card pad={20}>
         <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 4 }}>Language</div>
-        <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>Live translation runs when these differ â€” STT in the caller's language, reply in the agent's.</div>
+        <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>Live translation runs when these differ â€" STT in the caller's language, reply in the agent's.</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Caller speaks" hint="Deepgram STT input language">
             <Select value={form.lang_in} onChange={(e) => up('lang_in', e.target.value)} style={{ width: '100%' }}
@@ -400,11 +400,11 @@ function ScriptTab({ form, up }) {
       <Card pad={20}>
         <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 4 }}>Presentation script</div>
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>
-          Optional. The agent reads or references this during the call â€” great for sales pitches, demo walkthroughs, or support scripts.
+          Optional. The agent reads or references this during the call â€" great for sales pitches, demo walkthroughs, or support scripts.
         </div>
         <Field label="Script (plain text or Markdown)">
           <TextArea rows={16} value={form.script} onChange={(e) => up('script', e.target.value)} mono
-            placeholder={`# Demo script â€” 3 minutes\n\n## Hook (0:00 â€“ 0:30)\n"So teams typically come to Orbital for one of three reasons..."\n\n## Show the console (0:30 â€“ 1:30)\n- Open Live calls\n- Point out the barge-in toggle\n- Explain translation in 1 sentence\n\n## Close (2:30 â€“ 3:00)\n- Ask: what's their current call volume?\n- Offer Thursday/Friday implementation slot`}/>
+            placeholder={`# Demo script â€" 3 minutes\n\n## Hook (0:00 â€" 0:30)\n"So teams typically come to Orbital for one of three reasons..."\n\n## Show the console (0:30 â€" 1:30)\n- Open Live calls\n- Point out the barge-in toggle\n- Explain translation in 1 sentence\n\n## Close (2:30 â€" 3:00)\n- Ask: what's their current call volume?\n- Offer Thursday/Friday implementation slot`}/>
         </Field>
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <Btn size="sm" icon={<Ic.Plus size={12}/>}>Attach PDF</Btn>
@@ -432,7 +432,7 @@ function AdvancedTab({ form, up }) {
           <Field label="Max turns before handoff">
             <Input value={form.maxTurns} onChange={(e) => up('maxTurns', e.target.value)}/>
           </Field>
-          <Field label="Temperature" hint={`${form.temperature} â€” higher = more creative`}>
+          <Field label="Temperature" hint={`${form.temperature} â€" higher = more creative`}>
             <input type="range" min="0" max="1" step="0.05" value={form.temperature}
               onChange={(e) => up('temperature', parseFloat(e.target.value))}
               style={{ width: '100%', accentColor: T.primary }}/>
@@ -499,7 +499,7 @@ function AgentPreview({ form }) {
               {form.channels.map(c => <Chip key={c} tone="neutral"><ChannelIcon channel={c} size={10}/><span style={{ marginLeft: 3 }}>{ChannelLabel({ channel: c })}</span></Chip>)}
             </div>
           </KV>
-          <KV label="Language">{form.lang_in === form.lang_out ? form.lang_in : `${form.lang_in} â†’ ${form.lang_out}`}</KV>
+          <KV label="Language">{form.lang_in === form.lang_out ? form.lang_in : `${form.lang_in} → ${form.lang_out}`}</KV>
           <KV label="Video">{form.video ? 'Enabled' : 'Disabled'}</KV>
           <KV label="Temp">{form.temperature}</KV>
         </div>
@@ -685,7 +685,7 @@ function HistoryScreen({ history, onOpen }) {
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
             <Input placeholder="Search caller, agent, IDâ€¦" size="md" style={{ maxWidth: 340 }}
               prefix={<Ic.Search size={13} c={T.ink3}/>}/>
-            <Select options={['All agents', 'Sales â€” Outbound', 'Support concierge', 'Demo walkthrough']}/>
+            <Select options={['All agents', 'Sales â€" Outbound', 'Support concierge', 'Demo walkthrough']}/>
             <Select options={['All outcomes', 'Booked', 'Resolved', 'Escalated', 'No answer']}/>
             <Select options={['Last 7 days', 'Today', 'Last 30 days', 'All time']}/>
           </div>
@@ -803,7 +803,7 @@ function AnalyticsScreen() {
       <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
           <Metric label="Total calls" value="2,194" delta="+12%" deltaTone="green" sub="vs previous 7d"/>
-          <Metric label="Avg duration" value="3m 42s" delta="âˆ’8s" deltaTone="green"/>
+          <Metric label="Avg duration" value="3m 42s" delta="âˆ'8s" deltaTone="green"/>
           <Metric label="Booked outcomes" value="642" delta="+24%" deltaTone="green" sub="29% of total"/>
           <Metric label="Spend" value="$487" sub="â‰ˆ $0.09/min"/>
         </div>
@@ -812,7 +812,7 @@ function AnalyticsScreen() {
           <Card pad={20}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 20 }}>
               <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>Calls by hour</div>
-              <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3 }}>Today Â· peaks at 13:00</div>
+              <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3 }}>Today · peaks at 13:00</div>
               <div style={{ flex: 1 }}/>
               <Tabs variant="pill" active="today" onChange={()=>{}} tabs={[{ id: 'today', label: 'Today' }, { id: 'week', label: 'Week' }]}/>
             </div>
@@ -835,7 +835,7 @@ function AnalyticsScreen() {
             <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 16 }}>Top agents by volume</div>
             {[
               { name: 'Support concierge', v: 1240, pct: 56 },
-              { name: 'Sales â€” Outbound', v: 482, pct: 22 },
+              { name: 'Sales â€" Outbound', v: 482, pct: 22 },
               { name: 'Demo walkthrough', v: 318, pct: 14 },
               { name: 'Clinic triage', v: 96, pct: 4 },
               { name: 'NPS feedback', v: 58, pct: 4 },
@@ -950,7 +950,7 @@ function ChannelSettings() {
           <div style={{ width: 40, height: 40, borderRadius: T.r3, background: T.primarySoft, color: T.primary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Ic.Phone size={18}/></div>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>SIP trunk (outbound phone)</div>
-            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3 }}>Twilio Â· connected Â· 14 numbers</div>
+            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3 }}>Twilio · connected · 14 numbers</div>
           </div>
           <Chip tone="green" dot>Connected</Chip>
           <Btn size="sm">Manage</Btn>
@@ -967,7 +967,7 @@ function ChannelSettings() {
           <div style={{ width: 40, height: 40, borderRadius: T.r3, background: T.greenSoft, color: T.green, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Ic.Chat size={18}/></div>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>WhatsApp Business</div>
-            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3 }}>Meta Cloud API Â· +971 50 XXX 2248</div>
+            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3 }}>Meta Cloud API · +971 50 XXX 2248</div>
           </div>
           <Chip tone="green" dot>Connected</Chip>
           <Btn size="sm">Manage</Btn>
@@ -1063,7 +1063,7 @@ function BillingSettings() {
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
             <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>Current usage</div>
-            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3, marginTop: 2 }}>Nov 1 â€“ Nov 30</div>
+            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3, marginTop: 2 }}>Nov 1 â€" Nov 30</div>
           </div>
           <div style={{ fontFamily: T.sans, fontSize: 28, fontWeight: 600, color: T.ink, letterSpacing: -0.5 }}>$487<span style={{ fontSize: 14, color: T.ink3, fontWeight: 400 }}>.40</span></div>
         </div>
@@ -1226,18 +1226,18 @@ function NewCallModal({ agents, onClose, onLaunch }) {
       </Card>
 
       <Field label="Voice engine" style={{ marginBottom: 14 }}>
-        <div style={{ display: ‘grid’, gridTemplateColumns: ‘1fr 1fr’, gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {[
-            { key: ‘pipeline’,    label: ‘Standard Pipeline’, sub: ‘Deepgram STT â†’ LLM â†’ Aura TTS’ },
-            { key: ‘gemini_live’, label: ‘Gemini Live’,       sub: ‘Native audio Â· model handles VAD’ },
+            { key: 'pipeline',    label: 'Standard Pipeline', sub: 'Deepgram STT → LLM → Aura TTS' },
+            { key: 'gemini_live', label: 'Gemini Live',       sub: 'Native audio · model handles VAD' },
           ].map(({ key, label, sub }) => {
             const on = voiceMode === key;
             return (
               <button key={key} onClick={() => setVoiceMode(key)} style={{
-                padding: ‘10px 12px’, borderRadius: T.r3, cursor: ‘pointer’, textAlign: ‘left’,
+                padding: '10px 12px', borderRadius: T.r3, cursor: 'pointer', textAlign: 'left',
                 border: `1.5px solid ${on ? T.primary : T.border}`,
                 background: on ? T.primarySoft : T.surface,
-                display: ‘flex’, flexDirection: ‘column’, gap: 3,
+                display: 'flex', flexDirection: 'column', gap: 3,
               }}>
                 <span style={{ fontFamily: T.sans, fontSize: 12.5, fontWeight: 600, color: on ? T.primarySoftInk : T.ink }}>{label}</span>
                 <span style={{ fontFamily: T.sans, fontSize: 11, color: on ? T.primarySoftInk : T.ink3, opacity: 0.8 }}>{sub}</span>
@@ -1248,12 +1248,12 @@ function NewCallModal({ agents, onClose, onLaunch }) {
       </Field>
 
       <div style={{ padding: 12, borderRadius: T.r3, background: T.surfaceAlt, marginBottom: 4 }}>
-        <div style={{ fontFamily: T.sans, fontSize: 11, color: T.ink3, fontWeight: 500, textTransform: ‘uppercase’, letterSpacing: 0.5, marginBottom: 6 }}>Pre-flight</div>
+        <div style={{ fontFamily: T.sans, fontSize: 11, color: T.ink3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Pre-flight</div>
         <KV label="Agent">{agent.name}</KV>
         <KV label="Voice">{agent.voice}</KV>
-        <KV label="Language">{agent.lang_in === agent.lang_out ? agent.lang_in : `${agent.lang_in} â†’ ${agent.lang_out}`}</KV>
-        <KV label="Video">{video && channel === ‘web’ ? ‘On’ : ‘Off’}</KV>
-        <KV label="Engine">{voiceMode === ‘gemini_live’ ? ‘Gemini Live’ : ‘Standard Pipeline’}</KV>
+        <KV label="Language">{agent.lang_in === agent.lang_out ? agent.lang_in : `${agent.lang_in} → ${agent.lang_out}`}</KV>
+        <KV label="Video">{video && channel === 'web' ? 'On' : 'Off'}</KV>
+        <KV label="Engine">{voiceMode === 'gemini_live' ? 'Gemini Live' : 'Standard Pipeline'}</KV>
       </div>
 
       </div>
