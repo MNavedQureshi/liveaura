@@ -40,6 +40,13 @@ type CreateCallRequest struct {
 	//   "pipeline"     → Deepgram STT + LLM (Anthropic/Cerebras/Gemini/Groq) + Aura TTS
 	//   "gemini_live"  → single WebSocket to Gemini Live API (native voice in/out)
 	VoiceMode string `json:"voice_mode"`
+
+	// TTSProvider picks the TTS engine inside the standard pipeline. Ignored
+	// when VoiceMode != "pipeline". Allowed values:
+	//   ""               → default ("Deepgram Aura")
+	//   "Deepgram Aura"  → HTTP per-chunk Aura (current default, stable)
+	//   "Cartesia"       → Cartesia Sonic-2 over WebSocket (lower TTFB)
+	TTSProvider string `json:"tts_provider"`
 }
 
 var (
@@ -86,7 +93,8 @@ func createCall(c *gin.Context) {
 		"greeting":      req.Greeting,
 		"source_lang":   req.SourceLang,
 		"target_lang":   req.TargetLang,
-		"voice_mode":    req.VoiceMode, // "" → pipeline; "gemini_live" → Live API
+		"voice_mode":    req.VoiceMode,    // "" → pipeline; "gemini_live" → Live API
+		"tts_provider":  req.TTSProvider,  // "" → Deepgram Aura; "Cartesia" → Sonic-2 WS
 	}
 	if req.PresentationScript != "" {
 		meta["presentation_script"] = req.PresentationScript

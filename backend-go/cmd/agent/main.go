@@ -150,7 +150,7 @@ func runSession(roomName string) {
 	// We always wrap it with voiceBase via buildAgentPrompt below so every
 	// agent — preset OR custom OR no-prompt — inherits the speech rules.
 	var userRole string
-	var sourceLang, targetLang, voiceMode string
+	var sourceLang, targetLang, voiceMode, ttsProvider string
 	var videoEnabled bool
 	if meta := room.Metadata(); meta != "" {
 		var m map[string]any
@@ -174,6 +174,11 @@ func runSession(roomName string) {
 			// (single WebSocket: native voice in/voice out via Gemini Live API).
 			if vm, ok := m["voice_mode"].(string); ok {
 				voiceMode = vm
+			}
+			// TTS provider inside the standard pipeline. Honoured only when
+			// voiceMode is "" or "pipeline". Empty → Deepgram Aura (default).
+			if tp, ok := m["tts_provider"].(string); ok {
+				ttsProvider = tp
 			}
 		}
 	}
@@ -301,9 +306,29 @@ func runSession(roomName string) {
 		}
 	}
 
-	p, err := pipeline.New(systemPrompt, sourceLang, targetLang)
-	if err != nil {
-		log.Printf("[agent] pipeline error: %v", err)
+	// Select TTS engine. Default (empty / "Deepgram Aura") keeps the existing
+	// HTTP-per-chunk path. "Cartesia" switches to Sonic-2 WebSocket TTS for
+	// lower TTFB. If Cartesia init fails (e.g. CARTESIA_API_KEY missing) we
+	// log + fall back to Aura so a misconfigured key never bricks a call.
+	var (
+		p     *pipeline.Pipeline
+		pErr  error
+	)
+	switch ttsProvider {
+	case "Cartesia":
+		ctts, cerr := pipeline.NewCartesiaTTS(targetLang)
+		if cerr != nil {
+			log.Printf("[agent] cartesia init failed (%v); falling back to Aura", cerr)
+			p, pErr = pipeline.New(systemPrompt, sourceLang, targetLang)
+		} else {
+			log.Printf("[agent] tts_provider=Cartesia model=sonic-2")
+			p, pErr = pipeline.NewWithTTS(systemPrompt, sourceLang, targetLang, ctts)
+		}
+	default:
+		p, pErr = pipeline.New(systemPrompt, sourceLang, targetLang)
+	}
+	if pErr != nil {
+		log.Printf("[agent] pipeline error: %v", pErr)
 		return
 	}
 	sinkMu.Lock()

@@ -37,7 +37,7 @@ type MetricEvent struct {
 type Pipeline struct {
 	stt *DeepgramSTT
 	llm LLM
-	tts *DeepgramTTS
+	tts TTSEncoder
 
 	// bargeDetector is a fast, local "user is talking" trigger that runs in
 	// parallel with Deepgram's SpeechStarted event. It cancels TTS within
@@ -82,14 +82,29 @@ type Pipeline struct {
 	OnTranscript func(text string)
 }
 
-// New creates a new pipeline.
+// TTSEncoder is the contract every TTS provider must satisfy. Implementations
+// MUST emit fully-encoded 20ms Opus frames (48kHz mono) to frameC and respect
+// ctx cancellation immediately so barge-in stays sub-100ms.
+type TTSEncoder interface {
+	StreamOpusFrames(ctx context.Context, text string, frameC chan<- []byte) error
+}
+
+// New creates a new pipeline using the default Deepgram Aura TTS.
 // sourceLang / targetLang are BCP-47 codes; pass "" for English.
 func New(systemPrompt, sourceLang, targetLang string) (*Pipeline, error) {
-	stt, err := NewDeepgramSTT()
+	tts, err := NewDeepgramTTS(targetLang)
 	if err != nil {
 		return nil, err
 	}
-	tts, err := NewDeepgramTTS(targetLang)
+	return NewWithTTS(systemPrompt, sourceLang, targetLang, tts)
+}
+
+// NewWithTTS builds a pipeline with a caller-supplied TTSEncoder. Use this
+// to swap in Cartesia WS, ElevenLabs, etc., without touching the rest of the
+// pipeline. Default behaviour (Deepgram Aura) is unchanged when callers stay
+// on New().
+func NewWithTTS(systemPrompt, sourceLang, targetLang string, tts TTSEncoder) (*Pipeline, error) {
+	stt, err := NewDeepgramSTT()
 	if err != nil {
 		return nil, err
 	}
