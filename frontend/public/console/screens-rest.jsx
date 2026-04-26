@@ -1298,4 +1298,4 @@ function ModalShell({ children, onClose, title, subtitle }) {
 Object.assign(window, {
   AgentBuilderScreen, HistoryScreen, AnalyticsScreen, SettingsScreen,
   ShareModal, NewCallModal, ModalShell, Toggle,
-
+});
