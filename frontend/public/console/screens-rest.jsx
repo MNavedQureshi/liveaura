@@ -1,4 +1,4 @@
-// Orbital Console â€" Agent Builder, Call History, Analytics, Settings, Modals
+// Orbital Console — Agent Builder, Call History, Analytics, Settings, Modals
 
 
 // ═══ PIPELINE CONFIG CONSTANTS ══════════════════════════════════════
@@ -295,7 +295,7 @@ function PersonaTab({ form, up }) {
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>How the agent thinks, what it knows, how it should behave. This becomes the Claude system prompt.</div>
         <Field label="System prompt" required hint="Tip: describe the tone, knowledge boundaries, and a clear objective for every call.">
           <TextArea rows={10} value={form.persona} onChange={(e) => up('persona', e.target.value)}
-            placeholder="You are Aria, an outbound sales agent for Orbital. Be warm, direct, and curious. Your job is to book a 20-minute implementation review for teams evaluating AI calling infrastructure. Never invent pricing or features â€" redirect to the demo if unsure."/>
+            placeholder="You are Aria, an outbound sales agent for Orbital. Be warm, direct, and curious. Your job is to book a 20-minute implementation review for teams evaluating AI calling infrastructure. Never invent pricing or features — redirect to the demo if unsure."/>
         </Field>
       </Card>
 
@@ -304,7 +304,7 @@ function PersonaTab({ form, up }) {
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>The first line the caller hears. Leave blank to let the agent improvise.</div>
         <Field label="Greeting message">
           <TextArea rows={2} value={form.greeting} onChange={(e) => up('greeting', e.target.value)}
-            placeholder="Hi, this is Aria from Orbital â€" thanks for hopping on. Is this still a good time?"/>
+            placeholder="Hi, this is Aria from Orbital — thanks for hopping on. Is this still a good time?"/>
         </Field>
       </Card>
     </div>
@@ -351,7 +351,7 @@ function ChannelTab({ form, up }) {
         <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 4 }}>Call channels</div>
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>Pick one or more. You can override per-call at launch time.</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-          <ChCard id="web" icon={<Ic.Globe size={15}/>} title="Web link" desc="Share a URL â€" anyone joins in-browser via LiveKit. No install."/>
+          <ChCard id="web" icon={<Ic.Globe size={15}/>} title="Web link" desc="Share a URL — anyone joins in-browser via LiveKit. No install."/>
           <ChCard id="phone" icon={<Ic.Phone size={15}/>} title="Outbound SIP" desc="Agent dials any phone number through your Twilio/Plivo trunk."/>
           <ChCard id="whatsapp" icon={<Ic.Chat size={15}/>} title="WhatsApp" desc="Send a WhatsApp invite with a one-tap join link."/>
         </div>
@@ -359,7 +359,7 @@ function ChannelTab({ form, up }) {
 
       <Card pad={20}>
         <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 4 }}>Language</div>
-        <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>Live translation runs when these differ â€" STT in the caller's language, reply in the agent's.</div>
+        <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>Live translation runs when these differ — STT in the caller's language, reply in the agent's.</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Caller speaks" hint="Deepgram STT input language">
             <Select value={form.lang_in} onChange={(e) => up('lang_in', e.target.value)} style={{ width: '100%' }}
@@ -400,11 +400,11 @@ function ScriptTab({ form, up }) {
       <Card pad={20}>
         <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 4 }}>Presentation script</div>
         <div style={{ fontFamily: T.sans, fontSize: 12.5, color: T.ink3, marginBottom: 16 }}>
-          Optional. The agent reads or references this during the call â€" great for sales pitches, demo walkthroughs, or support scripts.
+          Optional. The agent reads or references this during the call — great for sales pitches, demo walkthroughs, or support scripts.
         </div>
         <Field label="Script (plain text or Markdown)">
           <TextArea rows={16} value={form.script} onChange={(e) => up('script', e.target.value)} mono
-            placeholder={`# Demo script â€" 3 minutes\n\n## Hook (0:00 â€" 0:30)\n"So teams typically come to Orbital for one of three reasons..."\n\n## Show the console (0:30 â€" 1:30)\n- Open Live calls\n- Point out the barge-in toggle\n- Explain translation in 1 sentence\n\n## Close (2:30 â€" 3:00)\n- Ask: what's their current call volume?\n- Offer Thursday/Friday implementation slot`}/>
+            placeholder={`# Demo script — 3 minutes\n\n## Hook (0:00 — 0:30)\n"So teams typically come to Orbital for one of three reasons..."\n\n## Show the console (0:30 — 1:30)\n- Open Live calls\n- Point out the barge-in toggle\n- Explain translation in 1 sentence\n\n## Close (2:30 — 3:00)\n- Ask: what's their current call volume?\n- Offer Thursday/Friday implementation slot`}/>
         </Field>
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <Btn size="sm" icon={<Ic.Plus size={12}/>}>Attach PDF</Btn>
@@ -432,7 +432,7 @@ function AdvancedTab({ form, up }) {
           <Field label="Max turns before handoff">
             <Input value={form.maxTurns} onChange={(e) => up('maxTurns', e.target.value)}/>
           </Field>
-          <Field label="Temperature" hint={`${form.temperature} â€" higher = more creative`}>
+          <Field label="Temperature" hint={`${form.temperature} — higher = more creative`}>
             <input type="range" min="0" max="1" step="0.05" value={form.temperature}
               onChange={(e) => up('temperature', parseFloat(e.target.value))}
               style={{ width: '100%', accentColor: T.primary }}/>
@@ -685,7 +685,7 @@ function HistoryScreen({ history, onOpen }) {
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
             <Input placeholder="Search caller, agent, IDâ€¦" size="md" style={{ maxWidth: 340 }}
               prefix={<Ic.Search size={13} c={T.ink3}/>}/>
-            <Select options={['All agents', 'Sales â€" Outbound', 'Support concierge', 'Demo walkthrough']}/>
+            <Select options={['All agents', 'Sales — Outbound', 'Support concierge', 'Demo walkthrough']}/>
             <Select options={['All outcomes', 'Booked', 'Resolved', 'Escalated', 'No answer']}/>
             <Select options={['Last 7 days', 'Today', 'Last 30 days', 'All time']}/>
           </div>
@@ -835,7 +835,7 @@ function AnalyticsScreen() {
             <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 16 }}>Top agents by volume</div>
             {[
               { name: 'Support concierge', v: 1240, pct: 56 },
-              { name: 'Sales â€" Outbound', v: 482, pct: 22 },
+              { name: 'Sales — Outbound', v: 482, pct: 22 },
               { name: 'Demo walkthrough', v: 318, pct: 14 },
               { name: 'Clinic triage', v: 96, pct: 4 },
               { name: 'NPS feedback', v: 58, pct: 4 },
@@ -1063,7 +1063,7 @@ function BillingSettings() {
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
             <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>Current usage</div>
-            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3, marginTop: 2 }}>Nov 1 â€" Nov 30</div>
+            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3, marginTop: 2 }}>Nov 1 — Nov 30</div>
           </div>
           <div style={{ fontFamily: T.sans, fontSize: 28, fontWeight: 600, color: T.ink, letterSpacing: -0.5 }}>$487<span style={{ fontSize: 14, color: T.ink3, fontWeight: 400 }}>.40</span></div>
         </div>
@@ -1183,7 +1183,7 @@ function NewCallModal({ agents, onClose, onLaunch }) {
 
       <Field label="Meeting agenda" hint="One line per goal. The agent reads this at the top of the call." style={{ marginBottom: 14 }}>
         <TextArea rows={3} value={agenda} onChange={(e) => setAgenda(e.target.value)}
-          placeholder={`â€¢ Confirm identity\nâ€¢ Walk through pricing tiers\nâ€¢ Book a 20-min implementation review`}/>
+          placeholder={`• Confirm identity\n• Walk through pricing tiers\n• Book a 20-min implementation review`}/>
       </Field>
 
       <Field label="Agent prompt / behavior" style={{ marginBottom: 14 }}>
