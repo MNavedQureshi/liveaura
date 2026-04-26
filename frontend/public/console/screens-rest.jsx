@@ -4,43 +4,215 @@
 // ═══ PIPELINE CONFIG CONSTANTS ══════════════════════════════════════
 const STT_PROVIDERS = {
   'Deepgram': {
-    models: ['nova-3','nova-2','nova-2-meeting','nova-2-phonecall','nova-2-conversationalai','enhanced','base'],
+    models: [
+      'nova-3 — ⚡ best accuracy + lowest latency',
+      'nova-2 — solid accuracy, widely supported',
+      'nova-2-meeting — optimized for multi-speaker meetings',
+      'nova-2-phonecall — optimized for phone/PSTN audio',
+      'nova-2-conversationalai — optimized for chatbots',
+      'enhanced — legacy high-accuracy',
+      'base — legacy fast',
+    ],
     keyLabel: 'Deepgram API Key', placeholder: 'dg-...',
+  },
+  'AssemblyAI': {
+    models: [
+      'best — ★ highest accuracy, streaming',
+      'nano — ⚡ lowest latency, streaming',
+    ],
+    keyLabel: 'AssemblyAI API Key', placeholder: 'your-assemblyai-key',
+  },
+  'OpenAI Whisper': {
+    models: [
+      'whisper-1 — ★ proven accuracy (batch, ~300ms)',
+    ],
+    keyLabel: 'OpenAI API Key', placeholder: 'sk-...',
+  },
+  'Groq Whisper': {
+    models: [
+      'whisper-large-v3-turbo — ⚡ fast (batch ~150ms)',
+      'whisper-large-v3 — ★ highest accuracy (batch)',
+      'distil-whisper-large-v3-en — ⚡ fastest English (batch)',
+    ],
+    keyLabel: 'Groq API Key', placeholder: 'gsk_...',
+  },
+  'Gladia': {
+    models: [
+      'solaria-1 — ⚡ ultra-low latency streaming',
+      'solaria-1-flash — ⚡ fastest, good accuracy',
+    ],
+    keyLabel: 'Gladia API Key', placeholder: 'your-gladia-key',
+  },
+  'Speechmatics': {
+    models: [
+      'enhanced — ★ enterprise accuracy, real-time streaming',
+      'fast — ⚡ lower latency streaming',
+    ],
+    keyLabel: 'Speechmatics API Key', placeholder: 'your-speechmatics-key',
+  },
+  'Sarvam AI': {
+    models: [
+      'saarika:v2 — ★ best Indian language STT (11 langs)',
+      'saarika:v1 — Indian language STT',
+    ],
+    keyLabel: 'Sarvam API Key', placeholder: 'your-sarvam-key',
   },
 };
 const LLM_PROVIDERS = {
   'Anthropic': {
-    models: ['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-7'],
+    models: [
+      'claude-haiku-4-5-20251001 — ⚡ fastest, ~80ms TTFT',
+      'claude-sonnet-4-6 — ★ best balanced speed+quality',
+      'claude-opus-4-7 — ★ most capable, slower',
+    ],
     keyLabel: 'Anthropic API Key', placeholder: 'sk-ant-...',
   },
   'Gemini': {
-    models: ['gemini-2.5-flash','gemini-2.5-pro','gemini-2.0-flash','gemini-1.5-flash','gemini-1.5-pro'],
+    models: [
+      'gemini-2.5-flash — ⚡ fast + highly capable',
+      'gemini-2.5-pro — ★ most capable Gemini',
+      'gemini-2.0-flash — ⚡ fast multimodal',
+      'gemini-1.5-flash — ⚡ fast, 1M context',
+      'gemini-1.5-pro — ★ high quality, 1M context',
+    ],
     keyLabel: 'Google AI API Key', placeholder: 'AIza...',
   },
   'Groq': {
-    models: ['llama-3.1-8b-instant','llama-3.3-70b-versatile','llama3-70b-8192','mixtral-8x7b-32768'],
+    models: [
+      'llama-3.1-8b-instant — ⚡ fastest free tier ~50ms',
+      'llama-3.3-70b-versatile — ★ best quality on Groq',
+      'llama3-70b-8192 — solid quality, fast',
+      'mixtral-8x7b-32768 — ★ long context, balanced',
+      'gemma2-9b-it — ⚡ fast, efficient',
+    ],
     keyLabel: 'Groq API Key', placeholder: 'gsk_...',
   },
   'Cerebras': {
-    models: ['llama3.1-8b','llama-3.3-70b'],
+    models: [
+      'llama3.1-8b — ⚡ fastest inference available ~30ms',
+      'llama-3.3-70b — ★ high quality + very fast',
+    ],
     keyLabel: 'Cerebras API Key', placeholder: 'csk-...',
+  },
+  'OpenAI': {
+    models: [
+      'gpt-4o-mini — ⚡ fast + cheap, great for voice',
+      'gpt-4o — ★ best overall quality',
+      'gpt-4-turbo — ★ high quality, large context',
+      'gpt-3.5-turbo — ⚡ cheapest, decent quality',
+    ],
+    keyLabel: 'OpenAI API Key', placeholder: 'sk-...',
+  },
+  'Mistral': {
+    models: [
+      'mistral-small-latest — ⚡ fast + cheap',
+      'mistral-medium-latest — balanced quality',
+      'mistral-large-latest — ★ highest quality',
+    ],
+    keyLabel: 'Mistral API Key', placeholder: 'your-mistral-key',
+  },
+  'Together AI': {
+    models: [
+      'meta-llama/Llama-3-8b-chat-hf — ⚡ fast free-tier',
+      'meta-llama/Llama-3-70b-chat-hf — ★ high quality',
+      'mistralai/Mixtral-8x22B-Instruct-v0.1 — ★ long context',
+      'Qwen/Qwen2.5-72B-Instruct-Turbo — ★ fast + quality',
+    ],
+    keyLabel: 'Together AI API Key', placeholder: 'your-together-key',
+  },
+  'Fireworks AI': {
+    models: [
+      'accounts/fireworks/models/llama-v3p1-8b-instruct — ⚡ ultra-fast',
+      'accounts/fireworks/models/llama-v3p3-70b-instruct — ★ quality',
+      'accounts/fireworks/models/mixtral-8x22b-instruct — ★ long ctx',
+    ],
+    keyLabel: 'Fireworks AI API Key', placeholder: 'fw-...',
+  },
+  'Cohere': {
+    models: [
+      'command-r — ⚡ fast, RAG-optimized',
+      'command-r-plus — ★ highest quality Cohere',
+    ],
+    keyLabel: 'Cohere API Key', placeholder: 'your-cohere-key',
   },
 };
 const TTS_PROVIDERS = {
   'Deepgram Aura': {
-    models: ['aura-2-asteria-en','aura-2-luna-en','aura-2-stella-en','aura-2-athena-en','aura-2-hera-en','aura-2-orion-en','aura-2-zeus-en'],
+    models: [
+      'aura-2-asteria-en — ⚡ ~100ms, natural female',
+      'aura-2-luna-en — ⚡ warm female voice',
+      'aura-2-stella-en — ⚡ bright female voice',
+      'aura-2-athena-en — ⚡ authoritative female',
+      'aura-2-hera-en — ⚡ strong female',
+      'aura-2-orion-en — ⚡ natural male voice',
+      'aura-2-zeus-en — ⚡ deep male voice',
+      'aura-2-arcas-en — ⚡ clear male voice',
+    ],
     keyLabel: 'Deepgram API Key', placeholder: 'dg-...',
   },
   'Cartesia': {
-    models: ['sonic-2','sonic-english','sonic-multilingual'],
-    keyLabel: 'Cartesia API Key', placeholder: 'cartesia-...',
+    models: [
+      'sonic-2 — ⚡ ~80ms ultra-fast, best latency',
+      'sonic-english — ⚡ English-optimized, low latency',
+      'sonic-multilingual — multilingual, ~120ms',
+    ],
+    keyLabel: 'Cartesia API Key', placeholder: 'sk-cart-...',
+  },
+  'ElevenLabs': {
+    models: [
+      'eleven_turbo_v2_5 — ⚡ ~200ms lowest latency',
+      'eleven_turbo_v2 — ⚡ fast, good quality',
+      'eleven_multilingual_v2 — ★ best quality, 29 langs',
+      'eleven_monolingual_v1 — ★ highest English quality',
+    ],
+    keyLabel: 'ElevenLabs API Key', placeholder: 'xi-...',
+  },
+  'OpenAI TTS': {
+    models: [
+      'tts-1 — ⚡ fast, optimized for real-time (~200ms)',
+      'tts-1-hd — ★ highest quality (slower ~400ms)',
+    ],
+    keyLabel: 'OpenAI API Key', placeholder: 'sk-...',
+  },
+  'LMNT': {
+    models: [
+      'aurora — ⚡ ultra-low latency ~50ms',
+      'dragonfly — ⚡ fast, expressive',
+    ],
+    keyLabel: 'LMNT API Key', placeholder: 'your-lmnt-key',
+  },
+  'PlayHT': {
+    models: [
+      'PlayHT2.0-turbo — ⚡ fastest PlayHT, ~150ms',
+      'PlayDialog — ★ most natural, conversational',
+      'Play3.0-mini — ⚡ fast + multilingual',
+    ],
+    keyLabel: 'PlayHT API Key (user_id:api_key)', placeholder: 'userid:apikey',
+  },
+  'Microsoft Azure TTS': {
+    models: [
+      'en-US-JennyNeural — ★ most natural female (en-US)',
+      'en-US-GuyNeural — ★ natural male (en-US)',
+      'en-US-AriaNeural — ★ expressive female',
+      'en-IN-NeerjaNeural — ★ Indian English female',
+      'hi-IN-SwaraNeural — ★ Hindi female',
+    ],
+    keyLabel: 'Azure Speech Key (key:region)', placeholder: 'key:eastus',
+  },
+  'Sarvam AI': {
+    models: [
+      'bulbul:v1 — ★ best Indian language TTS (11 langs)',
+    ],
+    keyLabel: 'Sarvam API Key', placeholder: 'your-sarvam-key',
   },
 };
 const VAD_ALGOS = [
-  { key: 'local_vad', label: 'Local VAD',      desc: '~60ms · RMS energy · fastest, zero network calls' },
-  { key: 'namo',      label: 'NAMO Semantic',  desc: '<20ms · DistilBERT ONNX · sentence-complete aware' },
-  { key: 'deepgram',  label: 'Deepgram VAD',   desc: '150-300ms · cloud · built into STT stream' },
-  { key: 'silence',   label: 'Silence Timer',  desc: '150ms silence threshold · simple fallback' },
+  { key: 'local_vad',  label: 'Local RMS VAD',    desc: '⚡ ~60ms · energy-based · no network · works now' },
+  { key: 'namo',       label: 'NAMO Semantic',     desc: '⚡ <20ms · DistilBERT · sentence-complete · works now' },
+  { key: 'deepgram',   label: 'Deepgram VAD',      desc: '150-300ms · cloud · built into Deepgram STT stream · partial' },
+  { key: 'silero',     label: 'Silero VAD',        desc: '⚡ ~30ms · neural · highly accurate · needs wiring' },
+  { key: 'webrtcvad',  label: 'WebRTC VAD',        desc: '⚡ ~10ms · Google WebRTC · ultra-lightweight · needs wiring' },
+  { key: 'silence',    label: 'Silence Timer',     desc: '150ms silence · simple fallback · always works' },
 ];
 const PIPELINE_DEFAULTS = {
   stt_provider: 'Deepgram',      stt_model: 'nova-3',                    stt_api_key: '',
@@ -60,7 +232,6 @@ function AgentBuilderScreen({ agent, onBack, onSave }) {
     script: '', temperature: 0.7, maxTurns: 40,
     ...PIPELINE_DEFAULTS,
   });
-    ...PIPELINE_DEFAULTS,
   const up = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
@@ -82,6 +253,7 @@ function AgentBuilderScreen({ agent, onBack, onSave }) {
           { id: 'channel', label: 'Channel', icon: <Ic.Globe size={13}/> },
           { id: 'script', label: 'Script', icon: <Ic.Chat size={13}/> },
           { id: 'advanced', label: 'Advanced', icon: <Ic.Settings size={13}/> },
+          { id: 'pipeline', label: 'Pipeline', icon: <Ic.Zap size={13}/> },
         ]}/>
       </div>
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 380px', gap: 1, background: T.border, overflow: 'hidden' }}>
@@ -381,7 +553,8 @@ function ProviderSection({ title, icon, providerMap, providerKey, modelKey, apiK
   const handleProviderChange = (e) => {
     const p = e.target.value;
     up(providerKey, p);
-    up(modelKey, (providerMap[p]?.models || [])[0] || '');
+    const firstModel = (providerMap[p]?.models || [])[0] || '';
+    up(modelKey, firstModel.split(' — ')[0]);
   };
 
   return (
@@ -397,7 +570,7 @@ function ProviderSection({ title, icon, providerMap, providerKey, modelKey, apiK
         </Field>
         <Field label="Model">
           <Select value={form[modelKey]} onChange={(e) => up(modelKey, e.target.value)} style={{ width: '100%' }}
-            options={models.map(m => ({ value: m, label: m }))}/>
+            options={models.map(m => ({ value: m.split(' — ')[0], label: m }))}/>
         </Field>
       </div>
       <Field label={cfg.keyLabel || 'API Key'} hint="Stored locally in this browser session only">
