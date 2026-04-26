@@ -333,7 +333,7 @@ type Turn = {
 };
 
 /** Subscribes to RoomEvent.DataReceived (topic=metrics), aggregates events into turns. */
-function useTurns(): { turns: Turn[]; eventCount: number; lastBargeAt: number } {
+function useTurns(): { turns: Turn[]; events: MetricEvent[]; eventCount: number; lastBargeAt: number } {
   const room = useRoomContext();
   const [events, setEvents] = useState<MetricEvent[]>([]);
   const [lastBargeAt, setLastBargeAt] = useState(0);
@@ -412,7 +412,7 @@ function useTurns(): { turns: Turn[]; eventCount: number; lastBargeAt: number } 
     return Array.from(map.values()).sort((a, b) => a.id - b.id);
   }, [events]);
 
-  return { turns, eventCount: events.length, lastBargeAt };
+  return { turns, events, eventCount: events.length, lastBargeAt };
 }
 
 function Chip({
@@ -573,15 +573,78 @@ function TurnCard({ turn }: { turn: Turn }) {
 }
 
 function ConversationPanel() {
-  const { turns, eventCount, lastBargeAt } = useTurns();
+  const { turns, events, eventCount, lastBargeAt } = useTurns();
+
+  // Flat chat: every user_done event becomes a caller bubble; every llm_done
+  // event becomes an agent bubble. No grouping, no aggregation — every
+  // utterance the backend emits shows as its own message in arrival order.
+  // Per-event timing chips come from sibling events with the same turn_id
+  // (best-effort lookup; if a metric is missing, the chip just doesn't render).
+  type Msg = {
+    key: string;
+    who: "caller" | "agent";
+    text: string;
+    ts: number;
+    turnId: number;
+    sttMs?: number;     // user audio → STT final
+    llmMs?: number;     // llm_first_token → llm_done
+    ttsMs?: number;     // llm_done → tts_first_frame
+    barge?: boolean;
+  };
+  const messages = useMemo<Msg[]>(() => {
+    // Index events by turn_id so we can grab sibling timings for each bubble.
+    const byTurn = new Map<number, MetricEvent[]>();
+    for (const e of events) {
+      const list = byTurn.get(e.turn_id) || [];
+      list.push(e);
+      byTurn.set(e.turn_id, list);
+    }
+    const findEv = (turnId: number, type: string) =>
+      byTurn.get(turnId)?.find((e) => e.type === type);
+    const isBarged = (turnId: number) =>
+      !!byTurn.get(turnId)?.some((e) => e.type === "barge_in");
+
+    const out: Msg[] = [];
+    events.forEach((e, i) => {
+      if (e.type === "user_done" && e.text) {
+        const startEv = findEv(e.turn_id, "speech_started");
+        const sttMs = startEv ? Math.max(0, e.ts - startEv.ts) : undefined;
+        out.push({
+          key: `u-${e.turn_id}-${i}`,
+          who: "caller",
+          text: e.text,
+          ts: e.ts,
+          turnId: e.turn_id,
+          sttMs,
+          barge: isBarged(e.turn_id),
+        });
+      } else if (e.type === "llm_done" && e.text) {
+        const firstTok = findEv(e.turn_id, "llm_first_token");
+        const ttsFirst = findEv(e.turn_id, "tts_first_frame");
+        const llmMs = firstTok ? Math.max(0, e.ts - firstTok.ts) : undefined;
+        const ttsMs = ttsFirst ? Math.max(0, ttsFirst.ts - e.ts) : undefined;
+        out.push({
+          key: `a-${e.turn_id}-${i}`,
+          who: "agent",
+          text: e.text,
+          ts: e.ts,
+          turnId: e.turn_id,
+          llmMs,
+          ttsMs,
+          barge: isBarged(e.turn_id),
+        });
+      }
+    });
+    return out;
+  }, [events]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to the bottom as new turns / events stream in
+  // Auto-scroll to the bottom whenever a new message arrives
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [turns]);
+  }, [events.length]);
 
   // Top-level barge-in toast: fires on EVERY barge_in event regardless of
   // turn_id, so even if subsequent barges land on the same turn the user
@@ -656,7 +719,7 @@ function ConversationPanel() {
             </span>
           )}
           <span>
-            {turns.length} turn{turns.length === 1 ? "" : "s"}
+            {messages.length} msg{messages.length === 1 ? "" : "s"}
           </span>
           <span style={{ color: C.ink4 }}>· {eventCount} ev</span>
         </div>
@@ -704,7 +767,7 @@ function ConversationPanel() {
           gap: 10,
         }}
       >
-        {turns.length === 0 && (
+        {messages.length === 0 && (
           <div
             style={{
               color: C.ink3,
@@ -716,12 +779,70 @@ function ConversationPanel() {
             }}
           >
             <div style={{ fontSize: 24, marginBottom: 10 }}>💬</div>
-            Start talking — every turn appears here with STT, LLM and TTS timings so you can see exactly where time goes.
+            Start talking — every message you say and every reply from the agent will appear here in order.
           </div>
         )}
-        {turns.map((t) => (
-          <TurnCard key={t.id} turn={t} />
+        {messages.map((m) => (
+          <ChatBubble key={m.key} msg={m} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ChatBubble({ msg }: { msg: { who: "caller" | "agent"; text: string; ts: number; turnId: number; sttMs?: number; llmMs?: number; ttsMs?: number; barge?: boolean } }) {
+  const isAgent = msg.who === "agent";
+  const time = new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: isAgent ? "row" : "row-reverse",
+        gap: 8,
+        animation: "turnIn 320ms ease-out",
+      }}
+    >
+      <div
+        style={{
+          width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+          background: isAgent ? `linear-gradient(135deg, ${C.primary}, ${C.accent})` : C.surfaceAlt,
+          color: isAgent ? "#fff" : C.ink2,
+          fontFamily: C.sans, fontSize: 10, fontWeight: 600,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          border: isAgent ? "none" : `1px solid ${C.border}`,
+        }}
+      >
+        {isAgent ? "AI" : "U"}
+      </div>
+      <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 4, alignItems: isAgent ? "flex-start" : "flex-end" }}>
+        <div
+          style={{
+            padding: "8px 12px",
+            borderRadius: isAgent ? "12px 12px 12px 4px" : "12px 12px 4px 12px",
+            background: isAgent ? "#EEF1FF" : C.surfaceAlt,
+            border: `1px solid ${msg.barge ? "#f0b8b8" : "transparent"}`,
+            fontFamily: C.sans, fontSize: 13, color: C.ink, lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {msg.text}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontFamily: C.mono, fontSize: 9.5, color: C.ink4 }}>{time}</span>
+          {msg.sttMs != null && (
+            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "#E0E7FF", color: "#3730A3" }}>STT {msg.sttMs}ms</span>
+          )}
+          {msg.llmMs != null && (
+            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "#D1FAE5", color: "#065F46" }}>LLM {msg.llmMs}ms</span>
+          )}
+          {msg.ttsMs != null && (
+            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "#FEF3C7", color: "#92400E" }}>TTS {msg.ttsMs}ms</span>
+          )}
+          {msg.barge && (
+            <span style={{ fontFamily: C.mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: C.red, color: "#fff", fontWeight: 700 }}>⚡ barged</span>
+          )}
+        </div>
       </div>
     </div>
   );
