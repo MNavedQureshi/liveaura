@@ -327,12 +327,16 @@ type Turn = {
   ttsFirstFrameDelay?: number;   // TTS TTFB
   audioPlayingDelay?: number;    // speech_started → first audio frame (end-to-end)
   bargeIn?: boolean;
+  bargeCount?: number;           // bumps every time a barge_in event hits this turn
+                                 // — used as the React key for the badge so the
+                                 // CSS animation replays on repeated barges.
 };
 
 /** Subscribes to RoomEvent.DataReceived (topic=metrics), aggregates events into turns. */
-function useTurns(): Turn[] {
+function useTurns(): { turns: Turn[]; eventCount: number; lastBargeAt: number } {
   const room = useRoomContext();
   const [events, setEvents] = useState<MetricEvent[]>([]);
+  const [lastBargeAt, setLastBargeAt] = useState(0);
 
   useEffect(() => {
     if (!room) return;
@@ -342,10 +346,17 @@ function useTurns(): Turn[] {
       _kind?: unknown,
       topic?: string,
     ) => {
-      if (topic !== "metrics") return;
+      // Some LiveKit JS versions deliver topic at a different param index;
+      // accept anything that parses as a metrics-shaped JSON to be safe.
       try {
         const evt: MetricEvent = JSON.parse(new TextDecoder().decode(payload));
+        if (typeof evt?.type !== "string") return;
+        // Filter by topic if it was provided AND it's something other than
+        // "metrics" — fall through if the topic param is missing/empty so
+        // we don't silently drop legit events on SDK signature mismatches.
+        if (topic && topic !== "metrics") return;
         setEvents((prev) => [...prev, evt]);
+        if (evt.type === "barge_in") setLastBargeAt(Date.now());
       } catch {
         /* ignore malformed */
       }
@@ -356,7 +367,7 @@ function useTurns(): Turn[] {
     };
   }, [room]);
 
-  return useMemo(() => {
+  const turns = useMemo(() => {
     const map = new Map<number, Turn>();
     for (const evt of events) {
       let t = map.get(evt.turn_id);
@@ -394,11 +405,14 @@ function useTurns(): Turn[] {
           break;
         case "barge_in":
           t.bargeIn = true;
+          t.bargeCount = (t.bargeCount || 0) + 1;
           break;
       }
     }
     return Array.from(map.values()).sort((a, b) => a.id - b.id);
   }, [events]);
+
+  return { turns, eventCount: events.length, lastBargeAt };
 }
 
 function Chip({
@@ -463,6 +477,7 @@ function TurnCard({ turn }: { turn: Turn }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {turn.bargeIn && (
             <span
+              key={`barge-${turn.bargeCount || 0}`}
               style={{
                 color: "#fff",
                 background: C.red,
@@ -558,7 +573,7 @@ function TurnCard({ turn }: { turn: Turn }) {
 }
 
 function ConversationPanel() {
-  const turns = useTurns();
+  const { turns, eventCount, lastBargeAt } = useTurns();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to the bottom as new turns / events stream in
@@ -567,6 +582,17 @@ function ConversationPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [turns]);
+
+  // Top-level barge-in toast: fires on EVERY barge_in event regardless of
+  // turn_id, so even if subsequent barges land on the same turn the user
+  // gets fresh visual feedback. Auto-hides 4.5s after the latest barge.
+  const [bargeVisible, setBargeVisible] = useState(false);
+  useEffect(() => {
+    if (!lastBargeAt) return;
+    setBargeVisible(true);
+    const t = setTimeout(() => setBargeVisible(false), 4500);
+    return () => clearTimeout(t);
+  }, [lastBargeAt]);
 
   // Compute a running average of the "▶ audio" latency (only for completed, un-barged turns)
   const avgLatency = useMemo(() => {
@@ -632,8 +658,39 @@ function ConversationPanel() {
           <span>
             {turns.length} turn{turns.length === 1 ? "" : "s"}
           </span>
+          <span style={{ color: C.ink4 }}>· {eventCount} ev</span>
         </div>
       </div>
+
+      {/* Top-level BARGED IN banner — appears on every barge regardless of
+          which turn it landed on. The per-turn pill below is for history;
+          this is for live, "I just heard you cut off the agent" feedback. */}
+      {bargeVisible && (
+        <div
+          key={lastBargeAt}
+          style={{
+            margin: "8px 14px 0",
+            padding: "8px 12px",
+            borderRadius: C.r3,
+            background: C.red,
+            color: "#fff",
+            fontFamily: C.sans,
+            fontSize: 13,
+            fontWeight: 600,
+            letterSpacing: 0.4,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            animation: "bargeBanner 4.5s ease-out forwards",
+            boxShadow: `0 4px 14px ${C.red}66`,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 16 }}>⚡</span>
+          <span>BARGED IN — agent paused</span>
+        </div>
+      )}
 
       {/* Scrollable turns */}
       <div
@@ -802,6 +859,12 @@ export default function CallRoom({
         @keyframes turnIn {
           0%   { opacity: 0; transform: translateY(8px); }
           100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bargeBanner {
+          0%   { opacity: 0; transform: translateY(-8px) scale(0.96); }
+          10%  { opacity: 1; transform: translateY(0)    scale(1);    }
+          80%  { opacity: 1; transform: translateY(0)    scale(1);    }
+          100% { opacity: 0; transform: translateY(-4px) scale(0.98); }
         }
         @keyframes bargeFlash {
           0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(231,76,60,0.7); }
