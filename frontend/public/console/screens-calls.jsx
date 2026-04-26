@@ -237,10 +237,35 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
   const [timeUnit, setTimeUnit] = React.useState('ms'); // 'ms' | 'sec'
   const fmtTime = (ms) => timeUnit === 'ms' ? ms + 'ms' : (ms / 1000).toFixed(2) + 's';
 
+  // Chat state: seeded once from `transcript` prop, then appended to by
+  // window 'consoleturn' CustomEvent (backend or live wiring dispatches it).
+  // Never replaced — every turn is preserved in sequence.
+  const [chat, setChat] = React.useState(() => Array.isArray(transcript) ? [...transcript] : []);
+  const chatEndRef = React.useRef(null);
+  React.useEffect(() => {
+    const handler = (ev) => {
+      const turn = ev?.detail;
+      if (!turn || !turn.text) return;
+      // Filter to this room only when room id is provided
+      if (turn.room && call?.id && turn.room !== call.id) return;
+      setChat(prev => [...prev, {
+        t: turn.t || new Date().toISOString().slice(11, 19),
+        who: turn.who === 'caller' ? 'caller' : 'agent',
+        text: String(turn.text),
+        metrics: turn.metrics,
+      }]);
+    };
+    window.addEventListener('consoleturn', handler);
+    return () => window.removeEventListener('consoleturn', handler);
+  }, [call?.id]);
+  React.useEffect(() => {
+    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [chat.length]);
+
   const generateSummary = async () => {
     setSummaryLoading(true);
     try {
-      const convo = transcript.map(t => `${t.who === 'agent' ? 'Agent' : 'Caller'}: ${t.text}`).join('\n');
+      const convo = chat.map(t => `${t.who === 'agent' ? 'Agent' : 'Caller'}: ${t.text}`).join('\n');
       const out = await window.claude.complete(
         `You are an AI analyst summarizing a live sales call. In 3-4 bullet points, extract: intent, key objections raised, commitments made, and a confidence score (0-10) for a booked outcome. Use plain text with "•" bullets, no markdown headers. Keep under 80 words total.\n\nTranscript so far:\n${convo}`
       );
@@ -270,54 +295,33 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
           </>
         }
       />
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 400px', gap: 1, background: T.border, overflow: 'hidden' }}>
-        {/* Left: video tiles + waveform + controls */}
-        <div style={{ background: T.bg, padding: 20, overflowY: 'auto' }}>
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 560px', gap: 1, background: T.border, overflow: 'hidden' }}>
+        {/* Left: video tiles + compact audio/presence strip */}
+        <div style={{ background: T.bg, padding: 16, overflowY: 'auto' }}>
           {/* Video tiles */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
             <VideoTile who="agent" call={call}/>
             <VideoTile who="caller" call={call}/>
           </div>
 
-          {/* Waveform strip */}
-          <Card pad={16}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-              <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5 }}>Audio</div>
-              <div style={{ flex: 1 }}/>
+          {/* Compact audio + presence row (was two cards, now one slim strip) */}
+          <Card pad={12}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <Chip tone="primary" icon={<Ic.Bot size={10}/>} style={{ height: 22, fontSize: 11 }}>Agent</Chip>
+              <LiveWaveform bars={48} height={20} color={T.primary} active={call.status === 'active'}/>
+              <Chip tone="accent" style={{ height: 22, fontSize: 11 }}>Caller</Chip>
+              <LiveWaveform bars={48} height={20} color={T.accent} active={call.status === 'active'}/>
               <Duration seconds={call.duration} running={call.status === 'active'}/>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Chip tone="primary" icon={<Ic.Bot size={11}/>} style={{ minWidth: 70 }}>Agent</Chip>
-              <LiveWaveform bars={64} height={32} color={T.primary} active={call.status === 'active'}/>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
-              <Chip tone="accent" style={{ minWidth: 70 }}>Caller</Chip>
-              <LiveWaveform bars={64} height={32} color={T.accent} active={call.status === 'active'}/>
-            </div>
-          </Card>
-
-          {/* Monitor controls */}
-          <Card pad={16} style={{ marginTop: 12 }}>
-            <div style={{ fontFamily: T.sans, fontSize: 12, color: T.ink3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Your presence</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 8, borderTop: `1px solid ${T.border}` }}>
               <Tabs variant="pill" tabs={[
-                { id: 'listen', label: 'Silent listener', icon: <Ic.Eye size={12}/> },
-                { id: 'speak', label: 'Participant (barge-in)', icon: <Ic.Mic size={12}/> },
+                { id: 'listen', label: 'Silent listener', icon: <Ic.Eye size={11}/> },
+                { id: 'speak', label: 'Participant', icon: <Ic.Mic size={11}/> },
               ]} active={mode} onChange={setMode}/>
-              <div style={{ flex: 1 }}/>
-              <Btn size="sm" icon={<Ic.Copy size={12}/>}>Copy ID</Btn>
-            </div>
-            <div style={{
-              marginTop: 12, padding: '10px 12px', borderRadius: T.r3,
-              background: T.primarySoft, border: `1px solid #DDE4FF`,
-              display: 'flex', alignItems: 'flex-start', gap: 10,
-            }}>
-              <Ic.Bell size={13} c={T.primary} style={{ marginTop: 1 }}/>
-              <div style={{ fontFamily: T.sans, fontSize: 12, color: T.primarySoftInk, lineHeight: 1.5 }}>
-                {mode === 'listen'
-                  ? <>You're <b>silently listening</b>. The agent and caller cannot hear you. Switch to Participant to speak into the room.</>
-                  : <>You're a <b>participant</b>. The agent will pause its turn when you speak; your mic is live on the call.</>}
+              <div style={{ fontFamily: T.sans, fontSize: 11.5, color: T.ink3, flex: 1 }}>
+                {mode === 'listen' ? 'Muted — you cannot be heard' : 'Live mic — agent will yield when you speak'}
               </div>
+              <Btn size="sm" icon={<Ic.Copy size={11}/>}>Copy ID</Btn>
             </div>
           </Card>
         </div>
@@ -370,7 +374,7 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {transcript.map((t, i) => (
+              {chat.map((t, i) => (
                 <div key={i} style={{
                   display: 'flex', gap: 10,
                   flexDirection: t.who === 'agent' ? 'row' : 'row-reverse',
@@ -424,6 +428,7 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
                   </div>
                 </div>
               )}
+              <div ref={chatEndRef}/>
             </div>
           </div>
         </div>
