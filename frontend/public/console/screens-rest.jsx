@@ -1,5 +1,53 @@
-﻿// Orbital Console â€” Agent Builder, Call History, Analytics, Settings, Modals
+// Orbital Console â€” Agent Builder, Call History, Analytics, Settings, Modals
 
+
+// ═══ PIPELINE CONFIG CONSTANTS ══════════════════════════════════════
+const STT_PROVIDERS = {
+  'Deepgram': {
+    models: ['nova-3','nova-2','nova-2-meeting','nova-2-phonecall','nova-2-conversationalai','enhanced','base'],
+    keyLabel: 'Deepgram API Key', placeholder: 'dg-...',
+  },
+};
+const LLM_PROVIDERS = {
+  'Anthropic': {
+    models: ['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-7'],
+    keyLabel: 'Anthropic API Key', placeholder: 'sk-ant-...',
+  },
+  'Gemini': {
+    models: ['gemini-2.5-flash','gemini-2.5-pro','gemini-2.0-flash','gemini-1.5-flash','gemini-1.5-pro'],
+    keyLabel: 'Google AI API Key', placeholder: 'AIza...',
+  },
+  'Groq': {
+    models: ['llama-3.1-8b-instant','llama-3.3-70b-versatile','llama3-70b-8192','mixtral-8x7b-32768'],
+    keyLabel: 'Groq API Key', placeholder: 'gsk_...',
+  },
+  'Cerebras': {
+    models: ['llama3.1-8b','llama-3.3-70b'],
+    keyLabel: 'Cerebras API Key', placeholder: 'csk-...',
+  },
+};
+const TTS_PROVIDERS = {
+  'Deepgram Aura': {
+    models: ['aura-2-asteria-en','aura-2-luna-en','aura-2-stella-en','aura-2-athena-en','aura-2-hera-en','aura-2-orion-en','aura-2-zeus-en'],
+    keyLabel: 'Deepgram API Key', placeholder: 'dg-...',
+  },
+  'Cartesia': {
+    models: ['sonic-2','sonic-english','sonic-multilingual'],
+    keyLabel: 'Cartesia API Key', placeholder: 'cartesia-...',
+  },
+};
+const VAD_ALGOS = [
+  { key: 'local_vad', label: 'Local VAD',      desc: '~60ms · RMS energy · fastest, zero network calls' },
+  { key: 'namo',      label: 'NAMO Semantic',  desc: '<20ms · DistilBERT ONNX · sentence-complete aware' },
+  { key: 'deepgram',  label: 'Deepgram VAD',   desc: '150-300ms · cloud · built into STT stream' },
+  { key: 'silence',   label: 'Silence Timer',  desc: '150ms silence threshold · simple fallback' },
+];
+const PIPELINE_DEFAULTS = {
+  stt_provider: 'Deepgram',      stt_model: 'nova-3',                    stt_api_key: '',
+  llm_provider: 'Anthropic',     llm_model: 'claude-haiku-4-5-20251001', llm_api_key: '',
+  tts_provider: 'Deepgram Aura', tts_model: 'aura-2-asteria-en',         tts_api_key: '',
+  vad_algo: 'local_vad',
+};
 // â•â•â• AGENT BUILDER â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 function AgentBuilderScreen({ agent, onBack, onSave }) {
   const T = useC();
@@ -10,7 +58,9 @@ function AgentBuilderScreen({ agent, onBack, onSave }) {
     lang_in: 'English', lang_out: 'English',
     voice: 'Cartesia Â· Aria (en-US)',
     script: '', temperature: 0.7, maxTurns: 40,
+    ...PIPELINE_DEFAULTS,
   });
+    ...PIPELINE_DEFAULTS,
   const up = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
@@ -40,6 +90,7 @@ function AgentBuilderScreen({ agent, onBack, onSave }) {
           {tab === 'channel' && <ChannelTab form={form} up={up}/>}
           {tab === 'script' && <ScriptTab form={form} up={up}/>}
           {tab === 'advanced' && <AdvancedTab form={form} up={up}/>}
+          {tab === 'pipeline' && <PipelineTab form={form} up={up}/>}
         </div>
         <div style={{ background: T.surface, padding: 20, overflowY: 'auto' }}>
           <AgentPreview form={form}/>
@@ -296,10 +347,11 @@ function AgentPreview({ form }) {
       <div style={{ marginTop: 16 }}>
         <div style={{ fontFamily: T.sans, fontSize: 11.5, color: T.ink3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Pipeline</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <PipeStep icon="ðŸŽ™" label="Deepgram STT" sub={form.lang_in}/>
-          <PipeStep icon="âœ¨" label="Claude Sonnet 4" sub="System prompt + script"/>
-          <PipeStep icon="ðŸ”Š" label="Cartesia TTS" sub={form.lang_out}/>
-          <PipeStep icon="ðŸŒ" label="LiveKit room" sub={form.channels.join(' + ') || 'no channel'}/>
+          <PipeStep icon="STT" label={form.stt_provider + " STT"} sub={form.stt_model + " · " + form.lang_in}/>
+          <PipeStep icon="LLM" label={form.llm_provider + " · " + form.llm_model} sub="System prompt + script"/>
+          <PipeStep icon="TTS" label={form.tts_provider + " TTS"} sub={form.tts_model + " · " + form.lang_out}/>
+          <PipeStep icon="VAD" label={"VAD: " + ((VAD_ALGOS.find(function(v){return v.key===form.vad_algo})||{}).label||form.vad_algo)} sub="Turn detection"/>
+          <PipeStep icon="NET" label="LiveKit room" sub={form.channels.join(" + ") || "no channel"}/>
         </div>
       </div>
     </>
@@ -315,6 +367,118 @@ function PipeStep({ icon, label, sub }) {
         <div style={{ fontFamily: T.sans, fontSize: 12, fontWeight: 500, color: T.ink }}>{label}</div>
         <div style={{ fontFamily: T.sans, fontSize: 10.5, color: T.ink3 }}>{sub}</div>
       </div>
+    </div>
+  );
+}
+
+// ═══ PIPELINE TAB ════════════════════════════════════════════════════
+function ProviderSection({ title, icon, providerMap, providerKey, modelKey, apiKeyKey, form, up }) {
+  const T = useC();
+  const providers = Object.keys(providerMap);
+  const cfg = providerMap[form[providerKey]] || {};
+  const models = cfg.models || [];
+
+  const handleProviderChange = (e) => {
+    const p = e.target.value;
+    up(providerKey, p);
+    up(modelKey, (providerMap[p]?.models || [])[0] || '');
+  };
+
+  return (
+    <Card pad={20}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div style={{ width: 28, height: 28, borderRadius: T.r3, background: T.primarySoft, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.primary }}>{icon}</div>
+        <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>{title}</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <Field label="Provider">
+          <Select value={form[providerKey]} onChange={handleProviderChange} style={{ width: '100%' }}
+            options={providers.map(p => ({ value: p, label: p }))}/>
+        </Field>
+        <Field label="Model">
+          <Select value={form[modelKey]} onChange={(e) => up(modelKey, e.target.value)} style={{ width: '100%' }}
+            options={models.map(m => ({ value: m, label: m }))}/>
+        </Field>
+      </div>
+      <Field label={cfg.keyLabel || 'API Key'} hint="Stored locally in this browser session only">
+        <input
+          type="password"
+          value={form[apiKeyKey]}
+          onChange={(e) => up(apiKeyKey, e.target.value)}
+          placeholder={cfg.placeholder || '...'}
+          style={{
+            width: '100%', padding: '8px 12px', borderRadius: T.r3,
+            border: `1px solid ${T.border}`, background: T.bg,
+            fontFamily: T.mono, fontSize: 12.5, color: T.ink,
+            outline: 'none', boxSizing: 'border-box',
+          }}
+          onFocus={(e) => e.target.style.borderColor = T.primary}
+          onBlur={(e) => e.target.style.borderColor = T.border}
+        />
+      </Field>
+    </Card>
+  );
+}
+
+function PipelineTab({ form, up }) {
+  const T = useC();
+  return (
+    <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+      <ProviderSection
+        title="Speech-to-Text (STT)"
+        icon={<Ic.Mic size={14}/>}
+        providerMap={STT_PROVIDERS}
+        providerKey="stt_provider" modelKey="stt_model" apiKeyKey="stt_api_key"
+        form={form} up={up}
+      />
+
+      <ProviderSection
+        title="Language Model (LLM)"
+        icon={<Ic.Bot size={14}/>}
+        providerMap={LLM_PROVIDERS}
+        providerKey="llm_provider" modelKey="llm_model" apiKeyKey="llm_api_key"
+        form={form} up={up}
+      />
+
+      <ProviderSection
+        title="Text-to-Speech (TTS)"
+        icon={<Ic.Volume size={14}/>}
+        providerMap={TTS_PROVIDERS}
+        providerKey="tts_provider" modelKey="tts_model" apiKeyKey="tts_api_key"
+        form={form} up={up}
+      />
+
+      <Card pad={20}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <div style={{ width: 28, height: 28, borderRadius: T.r3, background: T.primarySoft, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.primary }}><Ic.Zap size={14}/></div>
+          <div style={{ fontFamily: T.sans, fontSize: 14, fontWeight: 600, color: T.ink }}>Voice Activity Detection</div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {VAD_ALGOS.map(({ key, label, desc }) => {
+            const on = form.vad_algo === key;
+            return (
+              <button key={key} onClick={() => up('vad_algo', key)} style={{
+                padding: '12px 14px', borderRadius: T.r3, cursor: 'pointer', textAlign: 'left',
+                border: `1.5px solid ${on ? T.primary : T.border}`,
+                background: on ? T.primarySoft : T.surface,
+                display: 'flex', flexDirection: 'column', gap: 4,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{
+                    width: 14, height: 14, borderRadius: '50%',
+                    border: `2px solid ${on ? T.primary : T.borderHi}`,
+                    background: on ? T.primary : 'transparent',
+                    flexShrink: 0,
+                  }}/>
+                  <span style={{ fontFamily: T.sans, fontSize: 12.5, fontWeight: 600, color: on ? T.primarySoftInk : T.ink }}>{label}</span>
+                </div>
+                <span style={{ fontFamily: T.sans, fontSize: 11, color: on ? T.primarySoftInk : T.ink3, opacity: 0.85, lineHeight: 1.4 }}>{desc}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -961,5 +1125,4 @@ function ModalShell({ children, onClose, title, subtitle }) {
 Object.assign(window, {
   AgentBuilderScreen, HistoryScreen, AnalyticsScreen, SettingsScreen,
   ShareModal, NewCallModal, ModalShell, Toggle,
-});
 

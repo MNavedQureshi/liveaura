@@ -234,6 +234,8 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
   const [mode, setMode] = React.useState('listen'); // listen | speak
   const [summary, setSummary] = React.useState(null);
   const [summaryLoading, setSummaryLoading] = React.useState(false);
+  const [timeUnit, setTimeUnit] = React.useState('ms'); // 'ms' | 'sec'
+  const fmtTime = (ms) => timeUnit === 'ms' ? ms + 'ms' : (ms / 1000).toFixed(2) + 's';
 
   const generateSummary = async () => {
     setSummaryLoading(true);
@@ -353,6 +355,18 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <div style={{ fontFamily: T.sans, fontSize: 11.5, color: T.ink3, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5 }}>Live transcript</div>
               <Chip tone="live" dot style={{ height: 18 }}>Streaming</Chip>
+              <div style={{ flex: 1 }}/>
+              <Duration seconds={call.duration} running={call.status === 'active'}/>
+              <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: `1px solid ${T.border}` }}>
+                {['ms','sec'].map(u => (
+                  <button key={u} onClick={() => setTimeUnit(u)} style={{
+                    padding: '3px 8px', cursor: 'pointer', border: 'none',
+                    background: timeUnit === u ? T.primary : T.surface,
+                    color: timeUnit === u ? '#fff' : T.ink3,
+                    fontFamily: T.mono, fontSize: 10.5, fontWeight: 500,
+                  }}>{u}</button>
+                ))}
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -378,6 +392,14 @@ function CallRoomScreen({ call, transcript, onBack, onShare, onEnd }) {
                       fontFamily: T.sans, fontSize: 12.5, color: T.ink2, lineHeight: 1.5,
                     }}>{t.text}</div>
                     <div style={{ fontFamily: T.mono, fontSize: 10, color: T.ink4, marginTop: 3, textAlign: t.who === 'agent' ? 'left' : 'right' }}>{t.t}</div>
+                    {t.who === 'agent' && t.metrics && (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap' }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#E0E7FF', color: '#3730A3' }}>STT {fmtTime(t.metrics.stt_ms)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#D1FAE5', color: '#065F46' }}>LLM {fmtTime(t.metrics.llm_ms)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#FEF3C7', color: '#92400E' }}>TTS {fmtTime(t.metrics.tts_ms)}</span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, padding: '2px 6px', borderRadius: 4, background: T.surfaceAlt, color: T.ink3 }}>total {fmtTime(t.metrics.stt_ms + t.metrics.llm_ms + t.metrics.tts_ms)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
