@@ -19,6 +19,7 @@ import (
 	"log"
 	"math"
 	"sync/atomic"
+	"time"
 
 	"github.com/hraban/opus"
 )
@@ -26,14 +27,25 @@ import (
 const (
 	// bargeRMSThreshold gates background noise vs voice. RMS values for
 	// typical phone-call voice land in 1500-5000; quiet rooms sit at 100-400;
-	// noisy environments at 500-1000. 1200 is a conservative middle ground.
+	// noisy environments at 500-1000. Bumped from 1200 → 2200 because users
+	// reported the agent firing barge-in during silence — most-likely cause
+	// was acoustic echo of the agent's own voice leaking through the
+	// speaker→mic path at ~1500-2000 RMS.
 	// Lower → snappier but more false-positives from background noise.
-	bargeRMSThreshold int32 = 1200
+	bargeRMSThreshold int32 = 2200
 
 	// bargeStreakLen is how many consecutive loud frames are required before
-	// firing. 3 frames × 20ms = 60ms. Increase to 4 (80ms) if false-positives
-	// in noisy environments become an issue.
-	bargeStreakLen int = 3
+	// firing. 5 frames × 20ms = 100ms — long enough to reject single coughs,
+	// keyboard clicks, brief echo bursts; short enough that an actual
+	// interruption still fires within a syllable.
+	bargeStreakLen int = 5
+
+	// bargeEchoGuardMs is the window after the agent starts a speaking burst
+	// during which we suppress barge-in entirely. Speaker → room → mic audio
+	// path takes 50-150ms, and browser AEC needs a moment to lock onto the
+	// agent's voice profile. Anything before this window is overwhelmingly
+	// echo, not the user genuinely cutting in 80ms after we started talking.
+	bargeEchoGuardMs int64 = 250
 
 	// bargePCMBufSize must hold the largest possible decoded frame. Opus can
 	// emit up to 120ms per packet at 48kHz mono = 5760 samples.
@@ -62,6 +74,12 @@ type BargeDetector struct {
 	// fired prevents repeat triggers within a single agent turn. Reset along
 	// with streak when isSpeaking goes 0.
 	fired atomic.Int32
+
+	// speakingStartedNs is when the current agent speaking burst began (unix
+	// nanos). Used by the echo-guard to suppress barge detection during the
+	// first ~250ms after the agent opens its mouth, which is when speaker→mic
+	// echo leakage is at its worst. Reset to 0 when isSpeaking goes 0.
+	speakingStartedNs atomic.Int64
 
 	onBargeIn func()
 }
@@ -94,11 +112,32 @@ func (b *BargeDetector) Feed(opusPayload []byte) {
 		if b.fired.Load() == 1 {
 			b.fired.Store(0)
 		}
+		if b.speakingStartedNs.Load() != 0 {
+			b.speakingStartedNs.Store(0)
+		}
 		return
+	}
+	// First frame of this speaking burst — record the start so the echo guard
+	// below can measure elapsed time. Cheap CompareAndSwap means subsequent
+	// frames in the burst skip the write.
+	if b.speakingStartedNs.Load() == 0 {
+		b.speakingStartedNs.CompareAndSwap(0, time.Now().UnixNano())
 	}
 	if b.fired.Load() == 1 {
 		// Already fired for this turn; don't re-trigger until agent stops.
 		return
+	}
+	// Echo guard: discard everything in the first 250ms of the agent's
+	// speaking burst. This is when speaker output leaks loudest into the
+	// user mic before browser AEC has converged. Genuine user interruption
+	// 80ms after the agent began talking is exceedingly rare; echo is not.
+	startedNs := b.speakingStartedNs.Load()
+	if startedNs > 0 {
+		elapsedMs := (time.Now().UnixNano() - startedNs) / 1_000_000
+		if elapsedMs < bargeEchoGuardMs {
+			b.streak = 0
+			return
+		}
 	}
 
 	n, err := b.decoder.Decode(opusPayload, b.pcmBuf)
